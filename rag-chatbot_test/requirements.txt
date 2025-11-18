@@ -1,0 +1,23 @@
+# 데이터 수집
+datasets>=2.14.0
+gutenbergpy>=0.1.5
+pandas>=2.0.0
+
+# 전처리
+nltk>=3.8.1
+
+# 임베딩 및 LLM
+google-generativeai>=0.3.0
+
+# 벡터 DB
+chromadb>=0.4.18
+
+# API
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+
+# 유틸리티
+python-dotenv>=1.0.0
+requests>=2.31.0
+
