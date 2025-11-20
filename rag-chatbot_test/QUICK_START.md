@@ -27,7 +27,7 @@ cd C:\SSAFY\gaji_PJT\gajiAI\rag-chatbot_test
 
 `.env` 파일 내용 예시:
 ```env
-GEMINI_API_KEYS=AIzaSyBD_N1XMO62qpNbyfSDll6ZP8_7CxEc48Y,AIzaSyBuEdCmXky2GZLqijOJ3_VcRaYNsRULGU,AIzaSyD89NHz0tNKE8nXG3G_ZIN88G-iRQneFbI,AIzaSyCOdx-T6uY-m3hRElS1KvJbr0N8jSTtbPw
+GEMINI_API_KEYS=YOUR-GEMINI-API-KEYS
 ```
 
 ### 2단계: 서버 실행
