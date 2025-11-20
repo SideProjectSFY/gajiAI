@@ -1,282 +1,482 @@
 """
-Gutenberg 데이터 수집 스크립트
+로컬 Gutenberg 데이터셋에서 책 검색 및 저장 스크립트
 
-두 가지 방법을 지원:
-1. Hugging Face datasets (추천 - 빠른 시작)
-2. gutenbergpy (특정 책 선택 시)
+로컬에 저장된 데이터셋에서 책 제목으로 검색하여 개별 txt 파일로 저장합니다.
 """
 
 import argparse
 import json
-import os
+import pandas as pd
+import re
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Tuple
+from datasets import load_from_disk, Dataset
 
-# 방법 1: Hugging Face datasets (추천)
-def collect_with_datasets(book_titles: List[str], output_dir: str) -> List[Dict]:
+
+def load_local_dataset(dataset_path: str) -> Dataset:
     """
-    Hugging Face datasets를 사용하여 Gutenberg 데이터 수집
+    로컬에 저장된 데이터셋 로드
     
     Args:
-        book_titles: 수집할 책 제목 리스트 (예: ["Pride and Prejudice", "The Great Gatsby"])
-        output_dir: 저장할 디렉토리 경로
+        dataset_path: 데이터셋 경로
     
     Returns:
-        수집된 책 데이터 리스트
+        Dataset 객체
     """
+    print(f"[로딩] 로컬 데이터셋 로드 중: {dataset_path}")
+    
     try:
+        # Arrow 파일에서 직접 로드
         from datasets import load_dataset
-    except ImportError:
-        print("❌ datasets 라이브러리가 설치되지 않았습니다.")
-        print("설치: pip install datasets")
-        return []
-    
-    print("📚 Hugging Face datasets에서 데이터 로드 중...")
-    
-    # 데이터셋 로드 (전체 다운로드는 시간이 걸릴 수 있음)
-    ds = load_dataset("sedthh/gutenberg_english", split="train")
-    
-    print(f"✅ 총 {len(ds)}개 책 로드 완료")
-    
-    collected_books = []
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-    
-    # 책 제목으로 필터링
-    import json
-    
-    # 불용어 제거 (검색에서 제외할 단어)
-    stopwords = {"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by"}
-    
-    for title_keyword in book_titles:
-        print(f"\n🔍 '{title_keyword}' 검색 중...")
-        
-        # 검색 키워드에서 불용어 제거하고 핵심 키워드만 추출
-        keywords = [kw.lower() for kw in title_keyword.split() if kw.lower() not in stopwords]
-        
-        if not keywords:
-            # 불용어만 있으면 원본 키워드 사용
-            keywords = [kw.lower() for kw in title_keyword.split()]
-        
-        print(f"   검색 키워드: {keywords}")
-        
-        # METADATA에서 제목을 파싱해서 검색
-        matching_books = []
-        max_search = min(50000, len(ds))  # 최대 50000개까지 검색
-        
-        for i in range(max_search):
-            try:
-                book = ds[i]
-                # METADATA 파싱
-                metadata_str = book.get("METADATA", "")
-                if not metadata_str:
-                    continue
-                
-                metadata = json.loads(metadata_str) if isinstance(metadata_str, str) else metadata_str
-                title = metadata.get("title", "")
-                
-                # 제목에서 이스케이프 문자 제거 후 검색
-                title_clean = title.replace("\r\n", " ").replace("\n", " ").lower()
-                
-                # 모든 핵심 키워드가 제목에 포함되어 있는지 확인 (더 정확한 매칭)
-                if all(keyword in title_clean for keyword in keywords):
-                    matching_books.append((i, book, metadata))
-                    print(f"   ✅ 매칭 발견: '{title.replace(chr(13), ' ').replace(chr(10), ' ').strip()}' (인덱스: {i})")
-                    break  # 첫 번째 정확한 매칭만 사용
-            except Exception as e:
-                if i < 10:  # 처음 10개만 에러 출력
-                    print(f"   ⚠️ 인덱스 {i} 처리 중 오류: {e}")
-                continue
-        
-        if len(matching_books) == 0:
-            print(f"⚠️ '{title_keyword}'를 찾을 수 없습니다 (검색 범위: {max_search:,}개).")
-            print(f"   시도한 키워드: {keywords}")
-            continue
-        
-        # 첫 번째 매칭 결과 사용
-        idx, book, metadata = matching_books[0]
-        
-        # 제목 정리
-        title = metadata.get("title", "Unknown")
-        title_clean = title.replace("\r\n", " ").replace("\n", " ").strip()
-        
-        # 저자 추출 (authors는 리스트일 수 있음)
-        authors = metadata.get("authors", metadata.get("author", "Unknown"))
-        if isinstance(authors, list):
-            author = ", ".join(authors) if authors else "Unknown"
-        elif isinstance(authors, str):
-            author = authors
-        else:
-            author = "Unknown"
-        
-        # Gutenberg ID (text_id 사용)
-        gutenberg_id = str(metadata.get("text_id", ""))
-        
-        book_data = {
-            "title": title_clean,
-            "author": author,
-            "text": book.get("TEXT", ""),
-            "gutenberg_id": gutenberg_id,
-        }
-        
-        # 파일로 저장
-        filename = f"{book_data['title'].replace(' ', '_').replace('/', '_')}.txt"
-        filepath = output_path / filename
-        
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(book_data["text"])
-        
-        # 메타데이터 저장
-        metadata_path = output_path / f"{filename}.metadata.json"
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump({
-                "title": book_data["title"],
-                "author": book_data["author"],
-                "gutenberg_id": book_data["gutenberg_id"],
-                "filepath": str(filepath),
-                "text_length": len(book_data["text"]),
-            }, f, indent=2, ensure_ascii=False)
-        
-        collected_books.append(book_data)
-        print(f"✅ '{book_data['title']}' 저장 완료: {filepath}")
-        print(f"   저자: {book_data['author']}")
-        print(f"   텍스트 길이: {len(book_data['text']):,} 문자")
-    
-    return collected_books
+        ds = load_dataset(
+            "arrow",
+            data_files={
+                "train": str(Path(dataset_path) / "default/0.0.0/*/gutenberg_english-train-*.arrow")
+            },
+            split="train"
+        )
+        print(f"[완료] 총 {len(ds):,}개 책 로드 완료")
+        return ds
+    except Exception as e:
+        print(f"[오류] 데이터셋 로드 실패: {e}")
+        raise
 
 
-# 방법 2: gutenbergpy (특정 책 ID로 다운로드)
-def collect_with_gutenbergpy(book_ids: List[int], output_dir: str) -> List[Dict]:
+def calculate_text_quality_score(text: str, text_length: int, gutenberg_id: str) -> Tuple[float, Dict]:
     """
-    gutenbergpy를 사용하여 특정 책 ID로 데이터 수집
+    텍스트 품질 점수 계산
+    
+    여러 기준을 종합하여 가장 완전하고 깨끗한 버전을 선택합니다.
+    
+    평가 기준:
+    1. 텍스트 길이 (긴 것이 더 완전함)
+    2. Gutenberg ID (낮을수록 오래된 원본, 더 신뢰도 높음)
+    3. 구조적 완성도 (Chapter, Letter 등 구조 요소)
+    4. 텍스트 품질 (특수문자, 깨진 문자 비율)
     
     Args:
-        book_ids: Gutenberg 책 ID 리스트 (예: [1342, 64317])
-        output_dir: 저장할 디렉토리 경로
+        text: 텍스트 내용
+        text_length: 텍스트 길이
+        gutenberg_id: Gutenberg ID
     
     Returns:
-        수집된 책 데이터 리스트
+        (품질 점수, 상세 정보)
     """
+    scores = {}
+    
+    # 1. 길이 점수 (0-40점): 긴 것이 더 완전함
+    # 정규화: 100,000자 기준
+    length_score = min(40, (text_length / 100000) * 40)
+    scores['length'] = length_score
+    
+    # 2. ID 점수 (0-30점): 낮은 ID가 더 신뢰도 높음
+    # ID가 낮을수록 높은 점수 (10000 이하는 만점)
     try:
-        import gutenbergpy.textget
-        import gutenbergpy.query
-    except ImportError:
-        print("❌ gutenbergpy 라이브러리가 설치되지 않았습니다.")
-        print("설치: pip install gutenbergpy")
-        return []
+        id_num = int(gutenberg_id)
+        if id_num <= 10000:
+            id_score = 30
+        elif id_num <= 50000:
+            id_score = 20
+        else:
+            id_score = 10
+    except:
+        id_score = 5
+    scores['id'] = id_score
     
-    print("📚 gutenbergpy로 데이터 수집 중...")
+    # 3. 구조 점수 (0-20점): 목차, 챕터 구조가 있으면 더 완전함
+    structure_score = 0
     
-    collected_books = []
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
+    # 샘플링: 처음 5000자만 검사 (성능 최적화)
+    sample_text = text[:5000].lower()
     
-    for book_id in book_ids:
+    # 목차 존재 여부
+    if 'contents' in sample_text or 'table of contents' in sample_text:
+        structure_score += 5
+    
+    # Chapter 구조
+    chapter_pattern = r'chapter\s+\d+|chapter\s+[ivxlcdm]+'
+    chapter_count = len(re.findall(chapter_pattern, sample_text, re.IGNORECASE))
+    if chapter_count >= 3:
+        structure_score += 10
+    elif chapter_count >= 1:
+        structure_score += 5
+    
+    # Letter 구조 (서간체 소설)
+    letter_pattern = r'letter\s+\d+|letter\s+[ivxlcdm]+'
+    letter_count = len(re.findall(letter_pattern, sample_text, re.IGNORECASE))
+    if letter_count >= 2:
+        structure_score += 5
+    
+    scores['structure'] = min(20, structure_score)
+    
+    # 4. 품질 점수 (0-10점): 깨끗한 텍스트
+    quality_score = 10
+    
+    # 샘플링: 중간 1000자 검사
+    mid_start = len(text) // 2
+    quality_sample = text[mid_start:mid_start+1000]
+    
+    # 비정상적인 문자 비율 (제어문자, 과도한 특수문자)
+    control_chars = sum(1 for c in quality_sample if ord(c) < 32 and c not in '\n\r\t')
+    if control_chars > 10:
+        quality_score -= 5
+    
+    # 과도한 줄바꿈 (연속 3개 이상)
+    excessive_newlines = len(re.findall(r'\n{4,}', quality_sample))
+    if excessive_newlines > 5:
+        quality_score -= 2
+    
+    scores['quality'] = max(0, quality_score)
+    
+    # 총점 계산 (0-100점)
+    total_score = sum(scores.values())
+    
+    return total_score, scores
+
+
+def dataset_to_dataframe(ds: Dataset) -> pd.DataFrame:
+    """
+    Dataset을 DataFrame으로 변환
+    
+    Args:
+        ds: Dataset 객체
+    
+    Returns:
+        pandas DataFrame
+    """
+    print("[변환] Dataset을 DataFrame으로 변환 중...")
+    
+    # 필요한 컬럼만 추출
+    data = []
+    for i, item in enumerate(ds):
+        if (i + 1) % 5000 == 0:
+            print(f"  진행: {i+1:,}/{len(ds):,} ({(i+1)/len(ds)*100:.1f}%)")
+        
         try:
-            print(f"\n🔍 책 ID {book_id} 다운로드 중...")
+            metadata_str = item.get("METADATA", "")
+            if not metadata_str:
+                continue
             
-            # 텍스트 다운로드
-            raw_text = gutenbergpy.textget.get_text_by_id(book_id)
+            metadata = json.loads(metadata_str) if isinstance(metadata_str, str) else metadata_str
             
-            # 바이트를 문자열로 변환
-            if isinstance(raw_text, bytes):
-                text = raw_text.decode("utf-8", errors="ignore")
+            title = metadata.get("title", "").replace("\r\n", " ").replace("\n", " ").strip()
+            authors = metadata.get("authors", metadata.get("author", "Unknown"))
+            
+            if isinstance(authors, list):
+                author = ", ".join(authors) if authors else "Unknown"
+            elif isinstance(authors, str):
+                author = authors
             else:
-                text = str(raw_text)
-            
-            # 메타데이터 조회
-            try:
-                meta = gutenbergpy.query.get_metadata_by_ID(book_id)
-                title = meta.get("Title", [f"Book_{book_id}"])[0] if meta else f"Book_{book_id}"
-                author = meta.get("Author", ["Unknown"])[0] if meta else "Unknown"
-            except:
-                title = f"Book_{book_id}"
                 author = "Unknown"
             
-            book_data = {
-                "title": title,
-                "author": author,
-                "text": text,
-                "gutenberg_id": str(book_id),
-            }
+            gutenberg_id = str(metadata.get("text_id", ""))
+            text = item.get("TEXT", "")
             
-            # 파일로 저장
-            filename = f"{title.replace(' ', '_').replace('/', '_')}.txt"
+            if title and text and len(text) >= 100:
+                data.append({
+                    "index": i,
+                    "gutenberg_id": gutenberg_id,
+                    "title": title,
+                    "author": author,
+                    "text": text,
+                    "text_length": len(text)
+                })
+        except Exception as e:
+            continue
+    
+    df = pd.DataFrame(data)
+    print(f"[완료] DataFrame 생성 완료: {len(df):,}개 책")
+    return df
+
+
+def search_books(df: pd.DataFrame, search_terms: List[str], dataset_path: str = None) -> pd.DataFrame:
+    """
+    책 제목으로 검색 (각 검색어당 품질이 가장 좋은 버전 선택)
+    
+    Args:
+        df: 책 데이터 DataFrame
+        search_terms: 검색어 리스트
+        dataset_path: 데이터셋 경로 (품질 분석용)
+    
+    Returns:
+        검색 결과 DataFrame
+    """
+    print(f"\n[검색] 검색어: {search_terms}")
+    
+    results = []
+    
+    for term in search_terms:
+        # 대소문자 구분 없이 검색
+        mask = df['title'].str.contains(term, case=False, na=False)
+        matched = df[mask]
+        
+        if len(matched) > 0:
+            print(f"  '{term}': {len(matched)}개 발견")
+            
+            if len(matched) == 1:
+                # 하나만 있으면 바로 선택
+                best_match = matched
+                print(f"    - [{best_match.iloc[0]['gutenberg_id']}] {best_match.iloc[0]['title']} by {best_match.iloc[0]['author']} ({best_match.iloc[0]['text_length']:,}자)")
+            else:
+                # 여러 개면 품질 분석
+                print(f"    [분석] 여러 버전 발견, 품질 분석 중...")
+                
+                # 품질 점수 계산 (데이터셋 로드 필요)
+                if dataset_path:
+                    try:
+                        ds = load_local_dataset(dataset_path)
+                        
+                        quality_scores = []
+                        for _, row in matched.iterrows():
+                            book_index = int(row['index'])
+                            text = ds[book_index]['TEXT']
+                            score, details = calculate_text_quality_score(
+                                text, 
+                                row['text_length'], 
+                                row['gutenberg_id']
+                            )
+                            quality_scores.append({
+                                'index': row['index'],
+                                'gutenberg_id': row['gutenberg_id'],
+                                'score': score,
+                                'details': details
+                            })
+                        
+                        # 점수 순으로 정렬
+                        quality_scores.sort(key=lambda x: x['score'], reverse=True)
+                        
+                        # 최고 점수 선택
+                        best_id = quality_scores[0]['gutenberg_id']
+                        best_match = matched[matched['gutenberg_id'] == best_id]
+                        
+                        # 결과 출력
+                        print(f"    [품질 분석 결과]")
+                        for qs in quality_scores[:3]:  # 상위 3개만 표시
+                            row = matched[matched['gutenberg_id'] == qs['gutenberg_id']].iloc[0]
+                            marker = "★ 선택" if qs['gutenberg_id'] == best_id else "  "
+                            print(f"      {marker} ID {qs['gutenberg_id']:>6} | 점수: {qs['score']:.1f} | "
+                                  f"길이: {qs['details']['length']:.1f} | ID: {qs['details']['id']:.1f} | "
+                                  f"구조: {qs['details']['structure']:.1f} | 품질: {qs['details']['quality']:.1f}")
+                        
+                    except Exception as e:
+                        # 품질 분석 실패시 길이로 폴백
+                        print(f"    [경고] 품질 분석 실패, 텍스트 길이로 선택: {e}")
+                        matched_sorted = matched.sort_values('text_length', ascending=False)
+                        best_match = matched_sorted.iloc[0:1]
+                else:
+                    # dataset_path 없으면 길이로만 판단
+                    matched_sorted = matched.sort_values('text_length', ascending=False)
+                    best_match = matched_sorted.iloc[0:1]
+                    print(f"    - [{best_match.iloc[0]['gutenberg_id']}] {best_match.iloc[0]['title']} (텍스트 길이 기준)")
+            
+            results.append(best_match)
+        else:
+            print(f"  '{term}': 검색 결과 없음")
+    
+    if results:
+        result_df = pd.concat(results, ignore_index=True)
+        # 중복 제거 (혹시 모를 중복)
+        result_df = result_df.drop_duplicates(subset=['gutenberg_id'])
+        print(f"\n[결과] 총 {len(result_df)}개 책 선택됨")
+        return result_df
+    else:
+        print("[결과] 검색 결과 없음")
+        return pd.DataFrame()
+
+
+def save_books_to_txt(df: pd.DataFrame, output_dir: str, dataset_path: str) -> List[Dict]:
+    """
+    책을 개별 txt 파일로 저장 (원본 데이터셋에서 텍스트 추출)
+    
+    Args:
+        df: 저장할 책 메타데이터 DataFrame
+        output_dir: 출력 디렉토리
+        dataset_path: 원본 데이터셋 경로
+    
+    Returns:
+        저장된 책 정보 리스트
+    """
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    saved_books = []
+    
+    print(f"\n[저장] {len(df)}개 책을 {output_dir}에 저장 중...")
+    print("[로딩] 원본 데이터셋에서 텍스트 추출 중...")
+    
+    # 원본 데이터셋 로드 (필요한 책만)
+    ds = load_local_dataset(dataset_path)
+    
+    for idx, row in df.iterrows():
+        try:
+            # 원본 데이터셋에서 텍스트 가져오기
+            book_index = int(row['index'])
+            text = ds[book_index]['TEXT']
+            
+            # 파일명 생성 (안전하게)
+            safe_title = "".join(
+                c if c.isalnum() or c in (' ', '_', '-') else '_' 
+                for c in row['title']
+            )
+            safe_title = safe_title[:100]  # 파일명 길이 제한
+            filename = f"{row['gutenberg_id']}_{safe_title}.txt"
+            
+            # 텍스트 파일 저장
             filepath = output_path / filename
-            
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(text)
             
             # 메타데이터 저장
             metadata_path = output_path / f"{filename}.metadata.json"
-            with open(metadata_path, "w", encoding="utf-8") as f:
-                json.dump({
-                    "title": title,
-                    "author": author,
-                    "gutenberg_id": str(book_id),
-                    "filepath": str(filepath),
-                    "text_length": len(text),
-                }, f, indent=2, ensure_ascii=False)
+            book_metadata = {
+                "index": book_index,
+                "title": row['title'],
+                "author": row['author'],
+                "gutenberg_id": row['gutenberg_id'],
+                "filepath": str(filepath),
+                "text_length": len(text),
+            }
             
-            collected_books.append(book_data)
-            print(f"✅ '{title}' 저장 완료: {filepath}")
-            print(f"   저자: {author}")
-            print(f"   텍스트 길이: {len(text):,} 문자")
+            with open(metadata_path, "w", encoding="utf-8") as f:
+                json.dump(book_metadata, f, indent=2, ensure_ascii=False)
+            
+            saved_books.append(book_metadata)
+            print(f"  [{idx+1}/{len(df)}] {row['title']} - 저장 완료")
             
         except Exception as e:
-            print(f"❌ 책 ID {book_id} 다운로드 실패: {e}")
+            print(f"  [오류] {row['title']} 저장 실패: {e}")
             continue
     
-    return collected_books
+    # 전체 정보 저장 (기존 데이터에 추가)
+    info_path = output_path / "saved_books_info.json"
+    
+    # 기존 데이터 로드
+    existing_books = []
+    if info_path.exists():
+        try:
+            with open(info_path, "r", encoding="utf-8") as f:
+                existing_data = json.load(f)
+                existing_books = existing_data.get("books", [])
+        except:
+            pass
+    
+    # 중복 제거 (gutenberg_id 기준)
+    existing_ids = {book["gutenberg_id"] for book in existing_books}
+    new_books = [book for book in saved_books if book["gutenberg_id"] not in existing_ids]
+    
+    # 병합
+    all_books = existing_books + new_books
+    
+    # 저장
+    with open(info_path, "w", encoding="utf-8") as f:
+        json.dump({
+            "total_saved": len(all_books),
+            "books": all_books
+        }, f, indent=2, ensure_ascii=False)
+    
+    if new_books:
+        print(f"[추가] {len(new_books)}개 새 책 추가됨 (기존: {len(existing_books)}개, 총: {len(all_books)}개)")
+    
+    print(f"\n[완료] {len(saved_books)}개 책 저장 완료")
+    print(f"[정보] 저장 위치: {output_dir}")
+    print(f"[정보] 메타데이터: {info_path}")
+    
+    return saved_books
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Gutenberg 데이터 수집 스크립트")
-    parser.add_argument(
-        "--method",
-        choices=["datasets", "gutenbergpy"],
-        default="datasets",
-        help="사용할 수집 방법 (기본: datasets)"
+    parser = argparse.ArgumentParser(
+        description="로컬 Gutenberg 데이터셋에서 책 검색 및 저장"
     )
     parser.add_argument(
-        "--titles",
-        nargs="+",
-        help="datasets 방법 사용 시: 책 제목 리스트 (예: 'Pride and Prejudice' 'The Great Gatsby')"
+        "--dataset-path",
+        default="data/origin_dataset/sedthh___gutenberg_english",
+        help="로컬 데이터셋 경로 (기본: data/origin_dataset/sedthh___gutenberg_english)"
     )
     parser.add_argument(
-        "--ids",
-        type=int,
+        "--search",
         nargs="+",
-        help="gutenbergpy 방법 사용 시: Gutenberg 책 ID 리스트 (예: 1342 64317)"
+        required=True,
+        help="검색할 책 제목 (예: 'Pride and Prejudice' 'Alice' 'Wizard of Oz')"
     )
     parser.add_argument(
         "--output",
-        default="data/raw",
-        help="출력 디렉토리 (기본: data/raw)"
+        default="data/origin_txt",
+        help="출력 디렉토리 (기본: data/origin_txt)"
+    )
+    parser.add_argument(
+        "--csv-path",
+        default="data/cache/books_metadata.csv",
+        help="CSV 메타데이터 파일 경로 (기본: data/cache/books_metadata.csv)"
+    )
+    parser.add_argument(
+        "--force-reload",
+        action="store_true",
+        help="CSV 무시하고 데이터셋에서 다시 로드"
+    )
+    parser.add_argument(
+        "--yes", "-y",
+        action="store_true",
+        help="확인 메시지 없이 자동 실행"
     )
     
     args = parser.parse_args()
     
-    if args.method == "datasets":
-        if not args.titles:
-            print("❌ datasets 방법 사용 시 --titles 옵션이 필요합니다.")
-            print("예시: python collect_data.py --method datasets --titles 'Pride and Prejudice'")
-            return
-        
-        books = collect_with_datasets(args.titles, args.output)
-        
-    elif args.method == "gutenbergpy":
-        if not args.ids:
-            print("❌ gutenbergpy 방법 사용 시 --ids 옵션이 필요합니다.")
-            print("예시: python collect_data.py --method gutenbergpy --ids 1342 64317")
-            return
-        
-        books = collect_with_gutenbergpy(args.ids, args.output)
+    # CSV 파일 경로
+    csv_path = Path(args.csv_path)
     
-    print(f"\n✅ 총 {len(books)}개 책 수집 완료!")
-    print(f"📁 저장 위치: {args.output}")
+    # DataFrame 로드 (CSV 우선)
+    if csv_path.exists() and not args.force_reload:
+        print(f"[CSV] 메타데이터 로드 중: {csv_path}")
+        df = pd.read_csv(csv_path)
+        print(f"[완료] {len(df):,}개 책 로드 완료 (CSV 사용)")
+    else:
+        print("[경고] CSV 파일이 없습니다. 먼저 convert_to_csv.py를 실행하세요.")
+        print("명령어: py convert_to_csv.py")
+        print("\n또는 데이터셋에서 직접 로드하시겠습니까? (시간 소요)")
+        
+        if not args.yes:
+            response = input("계속하시겠습니까? (y/N): ")
+            if response.lower() != 'y':
+                print("[취소] 취소되었습니다.")
+            return
+        
+        # 데이터셋 로드
+        ds = load_local_dataset(args.dataset_path)
+        
+        # DataFrame 변환
+        df = dataset_to_dataframe(ds)
+        
+        # CSV 저장
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(csv_path, index=False, encoding='utf-8-sig')
+        print(f"[저장] CSV 저장 완료: {csv_path}")
+    
+    # 책 검색 (품질 분석 포함)
+    result_df = search_books(df, args.search, args.dataset_path)
+    
+    if len(result_df) == 0:
+        print("\n[종료] 검색 결과가 없습니다.")
+        return
+    
+    # 저장 여부 확인
+    if not args.yes:
+        print(f"\n{len(result_df)}개 책을 저장하시겠습니까?")
+        response = input("계속하시겠습니까? (y/N): ")
+        if response.lower() != 'y':
+            print("[취소] 취소되었습니다.")
+            return
+        
+    # txt 파일로 저장 (원본 데이터셋에서 텍스트 추출)
+    saved_books = save_books_to_txt(result_df, args.output, args.dataset_path)
+    
+    print(f"\n{'='*60}")
+    print(f"작업 완료!")
+    print(f"  - 검색된 책: {len(result_df)}개")
+    print(f"  - 저장된 책: {len(saved_books)}개")
+    print(f"  - 저장 위치: {args.output}")
+    print(f"{'='*60}")
 
 
 if __name__ == "__main__":
     main()
-
