@@ -7,13 +7,15 @@ RAG 기반 "What If" 챗봇 API 서버
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
+from dotenv import load_dotenv
 
-from app.routers import chat
+# .env 파일 로드
+load_dotenv()
 
 app = FastAPI(
-    title="Gaji AI Backend - RAG Chatbot",
-    description="RAG 기반 What If 챗봇 API",
-    version="0.1.0"
+    title="Gaji AI Backend - Character Chat",
+    description="책 속 인물과 대화하는 AI 챗봇 (Gemini File Search 기반)",
+    version="2.0.0"
 )
 
 # CORS 설정
@@ -26,19 +28,23 @@ app.add_middleware(
 )
 
 # 라우터 등록
-app.include_router(chat.router)
+from app.routers import character_chat
+app.include_router(character_chat.router)
 
 
 @app.get("/")
 async def root():
     """루트 엔드포인트"""
     return {
-        "message": "Gaji AI Backend - RAG Chatbot API",
-        "version": "0.1.0",
+        "message": "Gaji AI Backend - Character Chat API",
+        "version": "2.0.0",
+        "description": "책 속 인물과 대화하는 AI 챗봇 (Gemini File Search 기반)",
         "endpoints": {
-            "chat": "/api/ai/conversations/{id}/messages",
-            "chat_stream": "/api/ai/conversations/{id}/messages/stream",
-            "search": "/api/ai/search/passages"
+            "character_list": "/character/list",
+            "character_info": "/character/info/{character_name}",
+            "chat": "/character/chat",
+            "chat_stream": "/character/chat/stream",
+            "health": "/character/health"
         }
     }
 
