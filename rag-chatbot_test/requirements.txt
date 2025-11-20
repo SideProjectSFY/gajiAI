@@ -1,23 +1,20 @@
-# 데이터 수집
-datasets>=2.14.0
-gutenbergpy>=0.1.5
-pandas>=2.0.0
+# FastAPI
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
 
-# 전처리
-nltk>=3.8.1
+# Gemini AI (새 SDK)
+google-genai==1.0.0
 
-# 임베딩 및 LLM
-google-generativeai>=0.3.0
+# 환경 변수
+python-dotenv==1.0.1
 
-# 벡터 DB
-chromadb>=0.4.18
+# 데이터 처리
+pandas==2.2.3
+numpy==2.1.3
 
-# API
-fastapi>=0.110.0
-uvicorn[standard]>=0.27.0
-pydantic>=2.5.0
+# Hugging Face Datasets
+datasets==3.1.0
 
 # 유틸리티
-python-dotenv>=1.0.0
-requests>=2.31.0
-
+tqdm==4.66.5
