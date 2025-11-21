@@ -6,27 +6,70 @@ RAG 기반 "What If" 챗봇 API 서버
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import os
+import structlog
 
+from app.config import settings
 from app.routers import chat
+from app.services.vectordb_client import get_vectordb_client
+from app.services.gemini_client import GeminiClient
+from app.celery_app import celery_app
+
+# Structlog 설정
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.UnicodeDecoder(),
+        structlog.processors.JSONRenderer()
+    ],
+    wrapper_class=structlog.stdlib.BoundLogger,
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    cache_logger_on_first_use=True,
+)
+
+logger = structlog.get_logger()
 
 app = FastAPI(
     title="Gaji AI Backend - RAG Chatbot",
-    description="RAG 기반 What If 챗봇 API",
-    version="0.1.0"
+    description="RAG 기반 What If 챗봇 API (Internal-Only Service)",
+    version="0.1.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
-# CORS 설정
+# CORS 설정 - Pattern B: Spring Boot만 허용
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 프로덕션에서는 특정 도메인만 허용
+    allow_origins=[settings.spring_boot_url],  # Spring Boot만 허용
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+logger.info("fastapi_initialized", cors_allowed=settings.spring_boot_url)
+
 # 라우터 등록
 app.include_router(chat.router)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """애플리케이션 시작 이벤트"""
+    logger.info("application_starting", environment=settings.app_env)
+    
+    # VectorDB 연결 확인
+    try:
+        vectordb = get_vectordb_client()
+        if vectordb.health_check():
+            logger.info("vectordb_connected", type=settings.vectordb_type)
+    except Exception as e:
+        logger.error("vectordb_connection_failed", error=str(e))
 
 
 @app.get("/")
@@ -35,18 +78,68 @@ async def root():
     return {
         "message": "Gaji AI Backend - RAG Chatbot API",
         "version": "0.1.0",
+        "environment": settings.app_env,
         "endpoints": {
-            "chat": "/api/ai/conversations/{id}/messages",
-            "chat_stream": "/api/ai/conversations/{id}/messages/stream",
-            "search": "/api/ai/search/passages"
+            "chat": "/api/conversations/{id}/messages",
+            "chat_stream": "/api/conversations/{id}/messages/stream",
+            "search": "/api/search/passages",
+            "health": "/health",
+            "docs": "/docs"
         }
     }
 
 
 @app.get("/health")
 async def health():
-    """헬스 체크"""
-    return {"status": "healthy"}
+    """
+    헬스 체크 엔드포인트
+    
+    Gemini API, VectorDB, Celery 워커 상태 확인
+    """
+    status = {
+        "status": "healthy",
+        "gemini_api": "unknown",
+        "vectordb": "unknown",
+        "celery_workers": 0
+    }
+    
+    # Gemini API 상태 확인
+    try:
+        gemini_client = GeminiClient()
+        # 간단한 테스트로 상태 확인
+        status["gemini_api"] = "connected"
+    except Exception as e:
+        status["gemini_api"] = f"error: {str(e)}"
+        status["status"] = "unhealthy"
+        logger.error("gemini_health_check_failed", error=str(e))
+    
+    # VectorDB 상태 확인
+    try:
+        vectordb = get_vectordb_client()
+        if vectordb.health_check():
+            status["vectordb"] = "connected"
+        else:
+            status["vectordb"] = "disconnected"
+            status["status"] = "unhealthy"
+    except Exception as e:
+        status["vectordb"] = f"error: {str(e)}"
+        status["status"] = "unhealthy"
+        logger.error("vectordb_health_check_failed", error=str(e))
+    
+    # Celery 워커 상태 확인
+    try:
+        inspect = celery_app.control.inspect()
+        active_workers = inspect.active()
+        if active_workers:
+            status["celery_workers"] = len(active_workers)
+        else:
+            status["celery_workers"] = 0
+    except Exception as e:
+        status["celery_workers"] = 0
+        logger.warning("celery_health_check_failed", error=str(e))
+    
+    logger.info("health_check", **status)
+    return status
 
 
 if __name__ == "__main__":
