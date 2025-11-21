@@ -28,8 +28,9 @@ app.add_middleware(
 )
 
 # 라우터 등록
-from app.routers import character_chat
+from app.routers import character_chat, scenario
 app.include_router(character_chat.router)
+app.include_router(scenario.router)
 
 
 @app.get("/")
@@ -44,7 +45,12 @@ async def root():
             "character_info": "/character/info/{character_name}",
             "chat": "/character/chat",
             "chat_stream": "/character/chat/stream",
-            "health": "/character/health"
+            "health": "/character/health",
+            "scenario_create": "/scenario/create",
+            "scenario_first_conversation": "/scenario/{scenario_id}/first-conversation",
+            "scenario_public": "/scenario/public",
+            "scenario_detail": "/scenario/{scenario_id}",
+            "scenario_fork": "/scenario/{scenario_id}/fork"
         }
     }
 

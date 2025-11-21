@@ -96,7 +96,6 @@ class CharacterChatService:
                 data = json.load(f)
                 return data.get('characters', [])
         except FileNotFoundError:
-            print(f"[경고] 캐릭터 정보 파일을 찾을 수 없습니다: {path}")
             return []
     
     def get_available_characters(self) -> List[Dict]:
@@ -185,7 +184,8 @@ class CharacterChatService:
         user_message: str,
         conversation_history: Optional[List[Dict]] = None,
         book_title: Optional[str] = None,
-        output_language: str = "ko"
+        output_language: str = "ko",
+        system_instruction: Optional[str] = None
     ) -> Dict:
         """
         캐릭터와 대화
@@ -211,8 +211,9 @@ class CharacterChatService:
                 'available_characters': self.get_available_characters()
             }
         
-        # 페르소나 프롬프트 생성
-        system_instruction = self.create_persona_prompt(character, output_language)
+        # 페르소나 프롬프트 생성 (제공되지 않으면 기본 생성)
+        if system_instruction is None:
+            system_instruction = self.create_persona_prompt(character, output_language)
         
         # 대화 기록 포함
         contents = []

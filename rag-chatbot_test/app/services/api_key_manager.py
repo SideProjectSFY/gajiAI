@@ -70,12 +70,7 @@ class APIKeyManager:
         # 현재 사용 중인 키 인덱스 (랜덤으로 초기화하여 분산 사용)
         self.current_key_index = self._select_initial_key()
         
-        # 초기 키 로그
-        total_keys = len(self.api_keys)
-        if self.initial_key_pool_size == total_keys:
-            print(f"[OK] API 키 #{self.current_key_index + 1} 사용 중 (전체 {total_keys}개 키 중 랜덤 선택)")
-        else:
-            print(f"[OK] API 키 #{self.current_key_index + 1} 사용 중 (초기 풀: {self.initial_key_pool_size}/{total_keys}개 키 중 랜덤 선택)")
+        # 초기 키 선택 완료 (로그 제거)
     
     def _load_api_keys(self) -> List[str]:
         """환경변수에서 모든 API 키 로드"""
@@ -167,7 +162,6 @@ class APIKeyManager:
         next_index = self._get_next_available_key_index()
         
         if next_index is None:
-            print("[ERROR] 사용 가능한 API 키가 없습니다. 모든 키가 할당량을 초과했습니다.")
             return False
         
         # 현재 키를 실패 목록에 추가
@@ -175,7 +169,6 @@ class APIKeyManager:
         
         # 키 전환
         self.current_key_index = next_index
-        print(f"[OK] API 키 #{self.current_key_index + 1}로 전환되었습니다.")
         return True
     
     def mark_key_failed(self, api_key: str):
@@ -191,7 +184,7 @@ class APIKeyManager:
             # 다음 키로 전환
             self.switch_to_next_key()
         except ValueError:
-            print(f"[경고] 실패한 API 키를 찾을 수 없습니다.")
+            pass
     
     def handle_api_error(self, error: Exception) -> bool:
         """API 에러 처리 및 키 전환
@@ -203,7 +196,6 @@ class APIKeyManager:
             키 전환 성공 여부
         """
         if self._is_quota_error(error):
-            print(f"[WARNING] API 할당량 초과: {str(error)}")
             return self.switch_to_next_key()
         return False
     

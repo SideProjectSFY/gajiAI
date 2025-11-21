@@ -29,6 +29,10 @@ class ChatRequest(BaseModel):
     conversation_history: Optional[List[Dict]] = None
     book_title: Optional[str] = None  # 책 제목 (같은 책의 여러 캐릭터 구분용)
     output_language: Optional[str] = "ko"  # 출력 언어 (기본값: "ko", 지원: "ko", "en", "ja", "zh" 등)
+    scenario_id: Optional[str] = None  # 시나리오 ID (시나리오 기반 대화용)
+    forked_scenario_id: Optional[str] = None  # Fork된 시나리오 ID
+    conversation_id: Optional[str] = None  # 기존 대화 ID
+    user_id: Optional[str] = None  # 사용자 ID (대화 저장용)
 
 class ChatResponse(BaseModel):
     """대화 응답"""
@@ -117,18 +121,42 @@ async def chat_with_character(
         캐릭터의 응답
     """
     try:
-        result = service.chat(
-            character_name=request.character_name,
-            user_message=request.message,
-            conversation_history=request.conversation_history,
-            book_title=request.book_title,
-            output_language=request.output_language
-        )
-        
-        if 'error' in result:
-            raise HTTPException(status_code=400, detail=result['error'])
-        
-        return ChatResponse(**result)
+        # 시나리오 기반 대화인지 확인
+        if request.scenario_id:
+            from app.services.scenario_chat_service import ScenarioChatService
+            scenario_chat_service = ScenarioChatService()
+            
+            result = scenario_chat_service.chat_with_scenario(
+                scenario_id=request.scenario_id,
+                user_message=request.message,
+                conversation_history=request.conversation_history,
+                output_language=request.output_language,
+                is_forked=request.forked_scenario_id is not None,
+                forked_scenario_id=request.forked_scenario_id,
+                conversation_id=request.conversation_id,
+                user_id=request.user_id or "default_user"
+            )
+            
+            return ChatResponse(
+                response=result["response"],
+                character_name=result["character_name"],
+                book_title=result["book_title"],
+                output_language=result.get("output_language")
+            )
+        else:
+            # 일반 대화
+            result = service.chat(
+                character_name=request.character_name,
+                user_message=request.message,
+                conversation_history=request.conversation_history,
+                book_title=request.book_title,
+                output_language=request.output_language
+            )
+            
+            if 'error' in result:
+                raise HTTPException(status_code=400, detail=result['error'])
+            
+            return ChatResponse(**result)
         
     except HTTPException:
         raise
