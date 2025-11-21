@@ -1,0 +1,18 @@
+name: "🔧 Chore"
+description: "빌드, 의존성, 문서 등 잡무"
+title: "[CHORE] "
+labels: ["chore", "sp001"]
+body:
+  - type: input
+    id: summary
+    attributes:
+      label: 작업 요약
+  - type: textarea
+    id: details
+    attributes:
+      label: 세부 내용
+  - type: textarea
+    id: impact
+    attributes:
+      label: 영향 범위
+      placeholder: 빌드 시간, 패키지 크기 등
