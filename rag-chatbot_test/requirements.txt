@@ -1,23 +1,50 @@
+# FastAPI Core
+fastapi>=0.121.3
+uvicorn[standard]>=0.38.0
+pydantic>=2.12.0
+pydantic-settings>=2.12.0
+
+# Gemini API (Story 요구사항)
+# 참고: google-generativeai는 레거시 라이브러리입니다
+# 새로운 google-genai SDK로 마이그레이션하는 것을 권장합니다
+google-generativeai>=0.8.3  # 레거시
+# google-genai>=1.0.0  # 권장 (새 SDK)
+
+# Vector DB (Story 요구사항)
+chromadb>=1.3.5
+# 참고: pinecone-client는 deprecated되었습니다
+# pinecone>=8.0.0로 교체 권장
+pinecone>=8.0.0
+
+# Async HTTP Client (Spring Boot callbacks)
+httpx>=0.28.1
+
+# Celery & Redis (Async task queue + Long Polling)
+# OPTIONAL: Redis is now optional - falls back to in-memory backend if not available
+# For production use, Redis is strongly recommended for Celery backend
+celery>=5.5.3
+redis>=7.1.0  # OPTIONAL: Can be omitted for development (uses memory backend)
+
+# Retry Logic
+tenacity>=9.0.0
+
+# Logging
+structlog>=25.1.0
+
 # 데이터 수집
-datasets>=2.14.0
-gutenbergpy>=0.1.5
-pandas>=2.0.0
+datasets>=3.3.0
+gutenbergpy>=0.3.5
+pandas>=2.3.0
 
 # 전처리
-nltk>=3.8.1
-
-# 임베딩 및 LLM
-google-generativeai>=0.3.0
-
-# 벡터 DB
-chromadb>=0.4.18
-
-# API
-fastapi>=0.110.0
-uvicorn[standard]>=0.27.0
-pydantic>=2.5.0
+nltk>=3.9.1
 
 # 유틸리티
-python-dotenv>=1.0.0
-requests>=2.31.0
+python-dotenv>=1.1.1
+requests>=2.32.3
 
+# Testing
+pytest>=8.3.4
+pytest-asyncio>=1.3.0
+pytest-cov>=7.0.0
+httpx>=0.28.1  # For testing
