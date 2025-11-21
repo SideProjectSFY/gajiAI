@@ -110,30 +110,72 @@ class CharacterChatService:
             for c in self.characters
         ]
     
-    def get_character_info(self, character_name: str) -> Optional[Dict]:
-        """특정 캐릭터 정보 가져오기"""
+    def get_character_info(self, character_name: str, book_title: Optional[str] = None) -> Optional[Dict]:
+        """특정 캐릭터 정보 가져오기
+        
+        Args:
+            character_name: 캐릭터 이름
+            book_title: 책 제목 (선택, 제공되면 같은 책의 캐릭터만 검색)
+        
+        Returns:
+            캐릭터 정보 딕셔너리 또는 None
+        """
         for char in self.characters:
             if char['character_name'].lower() == character_name.lower():
-                return char
+                # book_title이 제공되면 일치하는지 확인
+                if book_title is None or char['book_title'].lower() == book_title.lower():
+                    return char
         return None
     
-    def create_persona_prompt(self, character: Dict, user_message: str = None) -> str:
-        """페르소나 프롬프트 생성 (system_instruction용)"""
-        prompt = f"""당신은 '{character['book_title']}'에 등장하는 {character['character_name']}입니다.
+    def create_persona_prompt(self, character: Dict, output_language: str = "ko") -> str:
+        """페르소나 프롬프트 생성 (system_instruction용)
+        
+        Args:
+            character: 캐릭터 정보 딕셔너리
+            output_language: 출력 언어 ("ko", "en", "ja", "zh" 등)
+        """
+        # 언어별 출력 지시
+        language_instructions = {
+            "ko": "You must respond in Korean (한국어).",
+            "en": "You must respond in English.",
+            "ja": "You must respond in Japanese (日本語).",
+            "zh": "You must respond in Chinese (中文).",
+            "es": "You must respond in Spanish (Español).",
+            "fr": "You must respond in French (Français).",
+            "de": "You must respond in German (Deutsch).",
+        }
+        
+        language_instruction = language_instructions.get(output_language.lower(), f"You must respond in {output_language}.")
+        
+        prompt = f"""You are {character['character_name']} from '{character['book_title']}'.
 
-【페르소나】
+【Persona】
 {character['persona']}
 
-【말투 및 스타일】
+【Speaking Style】
 {character['speaking_style']}
 
-【대화 규칙】
-1. 항상 {character['character_name']}의 입장에서 답변하세요.
-2. 사용자의 질문에 답할 때, 책의 원본 내용을 참조해야 합니다. File Search 도구를 사용하여 책에서 관련 장면, 인물, 사건을 검색하고, 찾은 내용을 바탕으로 답변하세요.
-3. 책에 나온 구체적인 장면, 대화, 사건을 인용하면 답변의 신뢰성과 몰입감이 높아집니다.
-4. 캐릭터의 성격, 경험, 가치관을 반영하세요.
-5. 자연스럽고 몰입감 있는 대화를 유지하세요.
-6. 책에 나오지 않는 내용은 캐릭터의 성격에 맞게 상상력을 발휘하되, 책의 설정과 모순되지 않게 하세요."""
+【Output Language】
+{language_instruction}
+
+【Conversation Rules】
+1. Always respond from {character['character_name']}'s perspective.
+
+2. REQUIRED: You must use the File Search tool
+   - Before answering any question, you must first use the File Search tool to search for the original content from the book.
+   - It is absolutely forbidden to answer using only general knowledge without using File Search.
+   - Use File Search to check if the user's question relates to specific scenes, characters, events, or dialogues in the book.
+   - If you do not use File Search, the accuracy and reliability of your answer will be compromised.
+
+3. Citing specific scenes, dialogues, and events from the book enhances the reliability and immersion of your response.
+   - When you need to cite, base your citations on File Search results and quote the original text from the book.
+
+4. Reflect the character's personality, experiences, and values.
+
+5. Maintain natural and immersive conversation.
+
+6. For content not in the book, use your imagination in a way that matches the character's personality, but do not contradict the book's settings.
+   - However, before using your imagination, first check with File Search if there is any related content."""
         
         return prompt
     
@@ -141,7 +183,9 @@ class CharacterChatService:
         self,
         character_name: str,
         user_message: str,
-        conversation_history: Optional[List[Dict]] = None
+        conversation_history: Optional[List[Dict]] = None,
+        book_title: Optional[str] = None,
+        output_language: str = "ko"
     ) -> Dict:
         """
         캐릭터와 대화
@@ -150,20 +194,25 @@ class CharacterChatService:
             character_name: 대화할 캐릭터 이름
             user_message: 사용자 메시지
             conversation_history: 이전 대화 기록 (선택)
+            book_title: 책 제목 (선택, 같은 책의 여러 캐릭터 구분용)
+            output_language: 출력 언어 (기본값: "ko", 지원: "ko", "en", "ja", "zh" 등)
         
         Returns:
             응답 딕셔너리 (response, character_info, grounding_metadata)
         """
         # 캐릭터 정보 가져오기
-        character = self.get_character_info(character_name)
+        character = self.get_character_info(character_name, book_title)
         if not character:
+            error_msg = f"캐릭터를 찾을 수 없습니다: {character_name}"
+            if book_title:
+                error_msg += f" (책: {book_title})"
             return {
-                'error': f"캐릭터를 찾을 수 없습니다: {character_name}",
+                'error': error_msg,
                 'available_characters': self.get_available_characters()
             }
         
         # 페르소나 프롬프트 생성
-        system_instruction = self.create_persona_prompt(character)
+        system_instruction = self.create_persona_prompt(character, output_language)
         
         # 대화 기록 포함
         contents = []
@@ -229,7 +278,7 @@ class CharacterChatService:
                         ],
                         "temperature": 0.8,
                         "top_p": 0.95,
-                        "max_output_tokens": 1000
+                        "max_output_tokens": 8192
                     }
                 )
                 
@@ -257,6 +306,7 @@ class CharacterChatService:
                     'response': response_text,
                     'character_name': character['character_name'],
                     'book_title': character['book_title'],
+                    'output_language': output_language,
                     'grounding_metadata': grounding_metadata
                 }
                 
@@ -305,7 +355,9 @@ class CharacterChatService:
         self,
         character_name: str,
         user_message: str,
-        conversation_history: Optional[List[Dict]] = None
+        conversation_history: Optional[List[Dict]] = None,
+        book_title: Optional[str] = None,
+        output_language: str = "ko"
     ):
         """
         캐릭터와 스트리밍 대화
@@ -314,21 +366,26 @@ class CharacterChatService:
             character_name: 대화할 캐릭터 이름
             user_message: 사용자 메시지
             conversation_history: 이전 대화 기록 (선택)
+            book_title: 책 제목 (선택, 같은 책의 여러 캐릭터 구분용)
+            output_language: 출력 언어 (기본값: "ko", 지원: "ko", "en", "ja", "zh" 등)
         
         Yields:
             응답 청크
         """
         # 캐릭터 정보 가져오기
-        character = self.get_character_info(character_name)
+        character = self.get_character_info(character_name, book_title)
         if not character:
+            error_msg = f"캐릭터를 찾을 수 없습니다: {character_name}"
+            if book_title:
+                error_msg += f" (책: {book_title})"
             yield {
-                'error': f"캐릭터를 찾을 수 없습니다: {character_name}",
+                'error': error_msg,
                 'available_characters': self.get_available_characters()
             }
             return
         
         # 페르소나 프롬프트 생성
-        system_instruction = self.create_persona_prompt(character)
+        system_instruction = self.create_persona_prompt(character, output_language)
         
         # 대화 기록 포함
         contents = []
@@ -395,7 +452,7 @@ class CharacterChatService:
                         ],
                         "temperature": 0.8,
                         "top_p": 0.95,
-                        "max_output_tokens": 1000
+                        "max_output_tokens": 8192
                     }
                 )
                 

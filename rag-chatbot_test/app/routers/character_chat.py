@@ -27,12 +27,15 @@ class ChatRequest(BaseModel):
     character_name: str
     message: str
     conversation_history: Optional[List[Dict]] = None
+    book_title: Optional[str] = None  # 책 제목 (같은 책의 여러 캐릭터 구분용)
+    output_language: Optional[str] = "ko"  # 출력 언어 (기본값: "ko", 지원: "ko", "en", "ja", "zh" 등)
 
 class ChatResponse(BaseModel):
     """대화 응답"""
     response: str
     character_name: str
     book_title: str
+    output_language: Optional[str] = None  # 사용된 출력 언어
     grounding_metadata: Optional[Dict] = None
 
 # 의존성: CharacterChatService 인스턴스
@@ -70,6 +73,7 @@ async def list_characters(service: CharacterChatService = Depends(get_character_
 @router.get("/info/{character_name}")
 async def get_character_info(
     character_name: str,
+    book_title: Optional[str] = None,
     service: CharacterChatService = Depends(get_character_service)
 ):
     """
@@ -77,16 +81,20 @@ async def get_character_info(
     
     Args:
         character_name: 캐릭터 이름
+        book_title: 책 제목 (선택, 같은 책의 여러 캐릭터 구분용)
     
     Returns:
         캐릭터 상세 정보
     """
     try:
-        character = service.get_character_info(character_name)
+        character = service.get_character_info(character_name, book_title)
         if not character:
+            error_msg = f"캐릭터를 찾을 수 없습니다: {character_name}"
+            if book_title:
+                error_msg += f" (책: {book_title})"
             raise HTTPException(
                 status_code=404,
-                detail=f"캐릭터를 찾을 수 없습니다: {character_name}"
+                detail=error_msg
             )
         return character
     except HTTPException:
@@ -112,7 +120,9 @@ async def chat_with_character(
         result = service.chat(
             character_name=request.character_name,
             user_message=request.message,
-            conversation_history=request.conversation_history
+            conversation_history=request.conversation_history,
+            book_title=request.book_title,
+            output_language=request.output_language
         )
         
         if 'error' in result:
@@ -144,7 +154,9 @@ async def stream_chat_with_character(
             for chunk in service.stream_chat(
                 character_name=request.character_name,
                 user_message=request.message,
-                conversation_history=request.conversation_history
+                conversation_history=request.conversation_history,
+                book_title=request.book_title,
+                output_language=request.output_language
             ):
                 if 'error' in chunk:
                     yield f"data: {json.dumps({'error': chunk['error']}, ensure_ascii=False)}\n\n"
