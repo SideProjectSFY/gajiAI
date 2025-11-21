@@ -194,3 +194,89 @@ async def search_passages(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"검색 실패: {str(e)}")
 
+
+class ForkConversationRequest(BaseModel):
+    """대화 포크 요청 모델 (Epic 4, Story 4.4)"""
+    source_conversation_id: UUID
+    fork_point_message_id: UUID
+    new_scenario_id: UUID
+    user_id: UUID
+    scenario_context: str
+    source_depth: Optional[int] = 0
+    message_history: Optional[List[dict]] = None
+
+
+class ForkConversationResponse(BaseModel):
+    """대화 포크 응답 모델"""
+    forked_conversation_id: str
+    messages_copied: int
+    new_depth: int
+    scenario_context: str
+
+
+@router.post("/conversations/fork")
+async def fork_conversation(
+    request: ForkConversationRequest,
+    rag_service: RAGService = Depends(get_rag_service)
+):
+    """
+    대화 포크 생성 (Epic 4, Story 4.4)
+    
+    ROOT 대화에서만 포크 가능 (depth=0 → depth=1)
+    메시지 히스토리는 min(6, total) 개수만큼 복사
+    
+    Args:
+        request: 포크 요청 데이터
+        rag_service: RAG 서비스
+    
+    Returns:
+        포크된 대화 정보
+    """
+    try:
+        # 1. Depth constraint: ROOT-only forking (max depth = 1)
+        if request.source_depth >= 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot fork from forked conversation. Only ROOT conversations (depth=0) can be forked."
+            )
+        
+        # 2. Message history transfer: Copy min(6, total) messages
+        message_history = request.message_history or []
+        messages_to_copy = min(6, len(message_history))
+        copied_messages = message_history[-messages_to_copy:] if messages_to_copy > 0 else []
+        
+        # 3. Generate new conversation ID (UUID v4)
+        from uuid import uuid4
+        forked_conversation_id = uuid4()
+        
+        # 4. Generate initial AI response with new scenario context
+        # This establishes the new scenario context in the forked conversation
+        initial_message = "Hello, I'm ready to explore this alternate scenario with you."
+        
+        # Use RAG service to generate context-aware initial response
+        # This validates that the fork can be processed successfully
+        _, _ = rag_service.generate_hybrid_response(
+            user_message=initial_message,
+            scenario_context=request.scenario_context,
+            conversation_history=copied_messages
+        )
+        
+        # 5. Return fork result
+        return ForkConversationResponse(
+            forked_conversation_id=str(forked_conversation_id),
+            messages_copied=messages_to_copy,
+            new_depth=request.source_depth + 1,
+            scenario_context=request.scenario_context
+        )
+    
+    except HTTPException:
+        # Re-raise HTTP exceptions (validation errors)
+        raise
+    
+    except Exception as e:
+        # Catch-all for unexpected errors
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fork conversation: {str(e)}"
+        )
+
