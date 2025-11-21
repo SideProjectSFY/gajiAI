@@ -6,6 +6,7 @@ Gemini API Key Manager
 
 import os
 import time
+import random
 from typing import List, Optional
 from dotenv import load_dotenv
 
@@ -13,8 +14,20 @@ from dotenv import load_dotenv
 class APIKeyManager:
     """API 키 관리 및 자동 로테이션"""
     
-    def __init__(self):
-        """API 키 매니저 초기화"""
+    def __init__(self, initial_key_pool_size: Optional[int] = None):
+        """API 키 매니저 초기화
+        
+        Args:
+            initial_key_pool_size: 초기 키 선택 풀 크기
+                - None: 자동 감지 (로드된 모든 키를 초기 풀로 사용)
+                - 정수: 명시적으로 지정된 개수만큼만 초기 풀로 사용
+                - 0 이하: 모든 키 사용 (자동 감지와 동일)
+        
+        초기 풀 크기 결정 우선순위:
+        1. initial_key_pool_size 파라미터 (명시적 설정)
+        2. GEMINI_INITIAL_KEY_POOL_SIZE 환경변수
+        3. 자동 감지 (로드된 키 개수 = 모든 키)
+        """
         # .env 파일 로드
         load_dotenv()
         
@@ -23,17 +36,46 @@ class APIKeyManager:
         if not self.api_keys:
             raise ValueError("최소 하나의 GEMINI_API_KEY가 필요합니다.")
         
-        # 현재 사용 중인 키 인덱스
-        self.current_key_index = 0
-        
         # 실패한 키 추적 (키: 실패 시간)
         self.failed_keys = {}
         
         # 실패한 키 재시도 대기 시간 (초)
         self.retry_delay = 300  # 5분
         
+        # 초기 키 선택 풀 크기 설정
+        if initial_key_pool_size is None:
+            # 환경변수에서 명시적 설정 확인
+            pool_size_str = os.getenv("GEMINI_INITIAL_KEY_POOL_SIZE")
+            if pool_size_str:
+                try:
+                    initial_key_pool_size = int(pool_size_str)
+                    # 0 이하이면 모든 키 사용
+                    if initial_key_pool_size <= 0:
+                        initial_key_pool_size = len(self.api_keys)
+                except ValueError:
+                    # 잘못된 값이면 자동 감지로 폴백
+                    initial_key_pool_size = None
+            else:
+                # 환경변수가 없으면 자동 감지: 로드된 키 개수를 초기 풀 크기로 사용
+                initial_key_pool_size = None
+        
+        # 초기 키 선택 풀 크기 결정
+        if initial_key_pool_size is None:
+            # 자동 감지: 모든 키를 초기 풀로 사용
+            self.initial_key_pool_size = len(self.api_keys)
+        else:
+            # 명시적 설정 또는 환경변수 설정 사용 (최대 키 개수로 제한)
+            self.initial_key_pool_size = min(initial_key_pool_size, len(self.api_keys))
+        
+        # 현재 사용 중인 키 인덱스 (랜덤으로 초기화하여 분산 사용)
+        self.current_key_index = self._select_initial_key()
+        
         # 초기 키 로그
-        print(f"[OK] API 키 #{self.current_key_index + 1} 사용 중")
+        total_keys = len(self.api_keys)
+        if self.initial_key_pool_size == total_keys:
+            print(f"[OK] API 키 #{self.current_key_index + 1} 사용 중 (전체 {total_keys}개 키 중 랜덤 선택)")
+        else:
+            print(f"[OK] API 키 #{self.current_key_index + 1} 사용 중 (초기 풀: {self.initial_key_pool_size}/{total_keys}개 키 중 랜덤 선택)")
     
     def _load_api_keys(self) -> List[str]:
         """환경변수에서 모든 API 키 로드"""
@@ -61,6 +103,22 @@ class APIKeyManager:
                 keys.append(legacy_key)
         
         return keys
+    
+    def _select_initial_key(self) -> int:
+        """초기 키를 랜덤으로 선택
+        
+        Returns:
+            선택된 키 인덱스
+        """
+        # 초기 풀에서 사용 가능한 키만 필터링
+        available_indices = list(range(self.initial_key_pool_size))
+        
+        # 사용 가능한 키가 없으면 전체 키 중 선택
+        if not available_indices:
+            available_indices = list(range(len(self.api_keys)))
+        
+        # 랜덤 선택
+        return random.choice(available_indices)
     
     def get_current_key(self) -> str:
         """현재 사용 중인 API 키 반환"""
@@ -201,6 +259,7 @@ class APIKeyManager:
         status = {
             "total_keys": len(self.api_keys),
             "current_key_index": self.current_key_index,
+            "initial_key_pool_size": self.initial_key_pool_size,
             "failed_keys": [],
             "available_keys": []
         }
