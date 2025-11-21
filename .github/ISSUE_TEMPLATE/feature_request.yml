@@ -1,0 +1,44 @@
+name: "✨ Feature"
+description: "기능 제안·개선 요청"
+title: "[FEAT] "
+labels: ["feature", "sp001"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 한줄 설명
+      placeholder: |
+        #### Story 1.x
+        다크모드 토글 추가
+  - type: textarea
+    id: context
+    attributes:
+      label: 문제·기회
+      description: 왜 필요한가?
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 제안 내용
+      placeholder: |
+        * UX 흐름 / Figma 링크  
+        * API 스펙  
+        * 완료 기준(AC)
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: 완료 기준(AC)
+      description: |
+        완료 기준을 명확히 작성해 주세요.
+      placeholder: |
+        * 사용자는 다크모드를 토글할 수 있다.  
+        * 다크모드 설정은 로컬 스토리지에 저장된다.
+        * 다크모드 설정은 페이지를 새로고침해도 유지된다.
+  - type: textarea
+    id: refs
+    attributes:
+      label: 관련 참고자료
+      placeholder: Notion, 블로그, RFC 등 링크
+  - type: textarea
+    id: deps
+    attributes:
+      label: 관련 이슈·블로커
