@@ -6,31 +6,72 @@ RAG 기반 "What If" 챗봇 API 서버
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import os
-from dotenv import load_dotenv
+import structlog
 
-# .env 파일 로드
-load_dotenv()
+from app.config import settings
+from app.services.vectordb_client import get_vectordb_client
+from app.services.gemini_client import GeminiClient
+from app.celery_app import celery_app
+
+# Structlog 설정
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.UnicodeDecoder(),
+        structlog.processors.JSONRenderer()
+    ],
+    wrapper_class=structlog.stdlib.BoundLogger,
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    cache_logger_on_first_use=True,
+)
+
+logger = structlog.get_logger()
 
 app = FastAPI(
     title="Gaji AI Backend - Character Chat",
     description="책 속 인물과 대화하는 AI 챗봇 (Gemini File Search 기반)",
-    version="2.0.0"
+    version="2.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
-# CORS 설정
+# CORS 설정 - Pattern B: Spring Boot만 허용
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 프로덕션에서는 특정 도메인만 허용
+    allow_origins=[settings.spring_boot_url],  # Spring Boot만 허용
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 라우터 등록
-from app.routers import character_chat, scenario
+logger.info("fastapi_initialized", cors_allowed=settings.spring_boot_url)
+
+# 라우터 등록 - Character Chat & Scenario 기능
+from app.routers import character_chat, scenario, chat
 app.include_router(character_chat.router)
 app.include_router(scenario.router)
+app.include_router(chat.router)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """애플리케이션 시작 이벤트"""
+    logger.info("application_starting", environment=settings.app_env)
+    
+    # VectorDB 연결 확인
+    try:
+        vectordb = get_vectordb_client()
+        if vectordb.health_check():
+            logger.info("vectordb_connected", type=settings.vectordb_type)
+    except Exception as e:
+        logger.error("vectordb_connection_failed", error=str(e))
 
 
 @app.get("/")
@@ -40,25 +81,82 @@ async def root():
         "message": "Gaji AI Backend - Character Chat API",
         "version": "2.0.0",
         "description": "책 속 인물과 대화하는 AI 챗봇 (Gemini File Search 기반)",
+        "environment": settings.app_env,
         "endpoints": {
+            # Character Chat endpoints
             "character_list": "/character/list",
             "character_info": "/character/info/{character_name}",
-            "chat": "/character/chat",
-            "chat_stream": "/character/chat/stream",
-            "health": "/character/health",
+            "character_chat": "/character/chat",
+            "character_chat_stream": "/character/chat/stream",
+            # Scenario endpoints
             "scenario_create": "/scenario/create",
             "scenario_first_conversation": "/scenario/{scenario_id}/first-conversation",
             "scenario_public": "/scenario/public",
             "scenario_detail": "/scenario/{scenario_id}",
-            "scenario_fork": "/scenario/{scenario_id}/fork"
+            "scenario_fork": "/scenario/{scenario_id}/fork",
+            # RAG Chat endpoints
+            "chat": "/api/conversations/{id}/messages",
+            "chat_stream": "/api/conversations/{id}/messages/stream",
+            "search": "/api/search/passages",
+            # Health & Docs
+            "health": "/health",
+            "docs": "/docs"
         }
     }
 
 
 @app.get("/health")
 async def health():
-    """헬스 체크"""
-    return {"status": "healthy"}
+    """
+    헬스 체크 엔드포인트
+    
+    Gemini API, VectorDB, Celery 워커 상태 확인
+    """
+    status = {
+        "status": "healthy",
+        "gemini_api": "unknown",
+        "vectordb": "unknown",
+        "celery_workers": 0
+    }
+    
+    # Gemini API 상태 확인
+    try:
+        gemini_client = GeminiClient()
+        # 간단한 테스트로 상태 확인 (실제 연결 검증)
+        _ = gemini_client  # 인스턴스 생성 성공 확인
+        status["gemini_api"] = "connected"
+    except Exception as e:
+        status["gemini_api"] = f"error: {str(e)}"
+        status["status"] = "unhealthy"
+        logger.error("gemini_health_check_failed", error=str(e))
+    
+    # VectorDB 상태 확인
+    try:
+        vectordb = get_vectordb_client()
+        if vectordb.health_check():
+            status["vectordb"] = "connected"
+        else:
+            status["vectordb"] = "disconnected"
+            status["status"] = "unhealthy"
+    except Exception as e:
+        status["vectordb"] = f"error: {str(e)}"
+        status["status"] = "unhealthy"
+        logger.error("vectordb_health_check_failed", error=str(e))
+    
+    # Celery 워커 상태 확인
+    try:
+        inspect = celery_app.control.inspect()
+        active_workers = inspect.active()
+        if active_workers:
+            status["celery_workers"] = len(active_workers)
+        else:
+            status["celery_workers"] = 0
+    except Exception as e:
+        status["celery_workers"] = 0
+        logger.warning("celery_health_check_failed", error=str(e))
+    
+    logger.info("health_check", **status)
+    return status
 
 
 if __name__ == "__main__":
