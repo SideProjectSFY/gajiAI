@@ -1,0 +1,18 @@
+FROM python:3.11-slim
+WORKDIR /app
+
+# Install uv for faster package installation
+RUN pip install uv
+
+# Copy requirements file from rag-chatbot_test directory
+COPY rag-chatbot_test/requirements.txt ./
+
+# Install dependencies
+RUN uv pip install --system -r requirements.txt
+
+# Copy application code from rag-chatbot_test directory
+COPY rag-chatbot_test/app ./app
+COPY rag-chatbot_test/scripts ./scripts
+
+# Run FastAPI with uvicorn auto-reload
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
