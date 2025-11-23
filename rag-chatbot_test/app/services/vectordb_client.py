@@ -51,6 +51,11 @@ class VectorDBClient(ABC):
         """연결 상태 확인"""
         pass
 
+    @abstractmethod
+    def list_collections(self) -> List[str]:
+        """컬렉션 목록 반환"""
+        pass
+
 
 class ChromaDBClient(VectorDBClient):
     """ChromaDB 클라이언트 (개발 환경) - ChromaDB 1.3.5+ compatible"""
@@ -149,6 +154,15 @@ class ChromaDBClient(VectorDBClient):
         except Exception as e:
             logger.error("chromadb_health_check_failed", error=str(e))
             return False
+
+    def list_collections(self) -> List[str]:
+        """컬렉션 목록 반환"""
+        try:
+            collections = self.client.list_collections()
+            return [c.name for c in collections]
+        except Exception as e:
+            logger.error("chromadb_list_collections_error", error=str(e))
+            return []
 
 
 class PineconeClient(VectorDBClient):
@@ -251,6 +265,16 @@ class PineconeClient(VectorDBClient):
         except Exception as e:
             logger.error("pinecone_health_check_failed", error=str(e))
             return False
+
+    def list_collections(self) -> List[str]:
+        """Pinecone에서는 namespaces를 컬렉션으로 취급"""
+        try:
+            stats = self.index.describe_index_stats()
+            namespaces = stats.get('namespaces', {})
+            return list(namespaces.keys())
+        except Exception as e:
+            logger.error("pinecone_list_collections_error", error=str(e))
+            return []
 
 
 def get_vectordb_client() -> VectorDBClient:
