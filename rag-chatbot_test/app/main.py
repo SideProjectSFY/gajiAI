@@ -13,10 +13,12 @@ from app.routers import chat
 from app.services.vectordb_client import get_vectordb_client
 from app.services.gemini_client import GeminiClient
 from app.celery_app import celery_app
+from app.middleware import CorrelationIdMiddleware
 
-# Structlog 설정
+# Structlog 설정 (with correlation ID context support)
 structlog.configure(
     processors=[
+        structlog.contextvars.merge_contextvars,  # Merge context vars (correlation ID)
         structlog.stdlib.filter_by_level,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
@@ -42,6 +44,9 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
+
+# Correlation ID middleware (must be added first for proper ordering)
+app.add_middleware(CorrelationIdMiddleware)
 
 # CORS 설정 - Pattern B: Spring Boot만 허용
 app.add_middleware(
@@ -93,16 +98,25 @@ async def root():
 async def health():
     """
     헬스 체크 엔드포인트
-    
-    Gemini API, VectorDB, Celery 워커 상태 확인
+
+    Gemini API, VectorDB, Redis, Celery 워커 상태 확인
+    Story 0.6: Inter-Service Health Check & API Contract
     """
+    from datetime import datetime, timezone
+    import redis
+
     status = {
         "status": "healthy",
         "gemini_api": "unknown",
         "vectordb": "unknown",
-        "celery_workers": 0
+        "vectordb_type": settings.vectordb_type,
+        "vectordb_collections": 0,
+        "redis": "unknown",
+        "redis_long_polling_ttl": "600s",
+        "celery_workers": 0,
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     }
-    
+
     # Gemini API 상태 확인
     try:
         gemini_client = GeminiClient()
@@ -112,12 +126,18 @@ async def health():
         status["gemini_api"] = f"error: {str(e)}"
         status["status"] = "unhealthy"
         logger.error("gemini_health_check_failed", error=str(e))
-    
+
     # VectorDB 상태 확인
     try:
         vectordb = get_vectordb_client()
         if vectordb.health_check():
             status["vectordb"] = "connected"
+            # Count collections
+            try:
+                collections = vectordb.list_collections()
+                status["vectordb_collections"] = len(collections) if collections else 0
+            except Exception:
+                status["vectordb_collections"] = 0
         else:
             status["vectordb"] = "disconnected"
             status["status"] = "unhealthy"
@@ -125,7 +145,20 @@ async def health():
         status["vectordb"] = f"error: {str(e)}"
         status["status"] = "unhealthy"
         logger.error("vectordb_health_check_failed", error=str(e))
-    
+
+    # Redis 상태 확인 (Celery broker + Long Polling storage)
+    try:
+        if settings.redis_url:
+            r = redis.Redis.from_url(settings.redis_url)
+            r.ping()
+            status["redis"] = "connected"
+        else:
+            status["redis"] = "not_configured"
+    except Exception as e:
+        status["redis"] = f"error: {str(e)}"
+        status["status"] = "unhealthy"
+        logger.error("redis_health_check_failed", error=str(e))
+
     # Celery 워커 상태 확인
     try:
         inspect = celery_app.control.inspect()
@@ -137,7 +170,7 @@ async def health():
     except Exception as e:
         status["celery_workers"] = 0
         logger.warning("celery_health_check_failed", error=str(e))
-    
+
     logger.info("health_check", **status)
     return status
 
