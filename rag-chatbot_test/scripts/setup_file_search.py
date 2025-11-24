@@ -284,7 +284,24 @@ def main():
         
         try:
             # API 클라이언트 초기화
+            # 문서에 따르면: client = genai.Client() (환경변수에서 API 키 가져옴)
+            # 하지만 여러 키를 사용하므로 명시적으로 전달
+            # google-genai 1.0.0에서는 api_key 파라미터를 지원해야 함
             client = genai.Client(api_key=api_key)
+            
+            # 디버그: 클라이언트 속성 확인 (문제 진단용)
+            if not hasattr(client, 'file_search_stores'):
+                print(f"[오류] Client 객체에 file_search_stores 속성이 없습니다.")
+                print(f"[디버그] Client 객체 속성: {[attr for attr in dir(client) if not attr.startswith('_')]}")
+                try:
+                    import google.genai
+                    print(f"[디버그] google-genai 버전: {google.genai.__version__ if hasattr(google.genai, '__version__') else '알 수 없음'}")
+                except:
+                    pass
+                print(f"[해결 방법]")
+                print(f"  1. pip install --upgrade google-genai")
+                print(f"  2. 또는 pip install google-genai==1.0.0")
+                raise AttributeError("file_search_stores 속성을 찾을 수 없습니다. google-genai 라이브러리 버전을 확인하세요.")
             
             # File Search Store 생성
             store = create_file_search_store(client, reset=args.reset)

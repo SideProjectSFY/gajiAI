@@ -26,19 +26,43 @@ def load_local_dataset(dataset_path: str) -> Dataset:
     print(f"[로딩] 로컬 데이터셋 로드 중: {dataset_path}")
     
     try:
-        # Arrow 파일에서 직접 로드
+        dataset_path_obj = Path(dataset_path)
+        
+        # 방법 1: load_from_disk 사용 (권장 - save_to_disk로 저장된 경우)
+        if (dataset_path_obj / "dataset_info.json").exists() or (dataset_path_obj / "state.json").exists():
+            print("  [방법] load_from_disk 사용")
+            ds = load_from_disk(str(dataset_path_obj))
+            print(f"[완료] 총 {len(ds):,}개 책 로드 완료")
+            return ds
+        
+        # 방법 2: Arrow 파일 직접 로드
+        arrow_files = list(dataset_path_obj.glob("data-*.arrow"))
+        if arrow_files:
+            print(f"  [방법] Arrow 파일 직접 로드 ({len(arrow_files)}개 파일)")
+            from datasets import load_dataset
+            # 모든 Arrow 파일을 로드
+            data_files = {
+                "train": [str(f) for f in sorted(arrow_files)]
+            }
+            ds = load_dataset("arrow", data_files=data_files, split="train")
+            print(f"[완료] 총 {len(ds):,}개 책 로드 완료")
+            return ds
+        
+        # 방법 3: 와일드카드 패턴 사용
+        print("  [방법] 와일드카드 패턴 사용")
         from datasets import load_dataset
-        ds = load_dataset(
-            "arrow",
-            data_files={
-                "train": str(Path(dataset_path) / "default/0.0.0/*/gutenberg_english-train-*.arrow")
-            },
-            split="train"
-        )
+        arrow_pattern = str(dataset_path_obj / "data-*.arrow")
+        ds = load_dataset("arrow", data_files={"train": arrow_pattern}, split="train")
         print(f"[완료] 총 {len(ds):,}개 책 로드 완료")
         return ds
+        
     except Exception as e:
         print(f"[오류] 데이터셋 로드 실패: {e}")
+        print(f"[디버그] 경로 확인: {dataset_path}")
+        print(f"[디버그] 경로 존재 여부: {Path(dataset_path).exists()}")
+        if Path(dataset_path).exists():
+            arrow_files = list(Path(dataset_path).glob("*.arrow"))
+            print(f"[디버그] 발견된 Arrow 파일: {len(arrow_files)}개")
         raise
 
 
