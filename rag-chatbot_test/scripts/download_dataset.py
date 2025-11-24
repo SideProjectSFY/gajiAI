@@ -39,16 +39,19 @@ def download_gutenberg_dataset(
     try:
         print("[1단계] 데이터셋 다운로드 중...")
         print("   (처음 실행 시 시간이 오래 걸릴 수 있습니다)")
+        print("   Resolving data files 후 실제 다운로드가 시작됩니다...")
         
         # 데이터셋 다운로드
         # streaming=False로 전체 데이터셋 다운로드
+        print("   [진행] Hugging Face에서 데이터셋 정보 확인 중...")
         dataset = load_dataset(
             dataset_name,
             split=split,
-            trust_remote_code=True
+            trust_remote_code=True,
+            download_mode="reuse_cache_if_exists"  # 캐시 재사용으로 속도 향상
         )
         
-        print(f"[완료] 데이터셋 다운로드 완료: {len(dataset):,}개 책")
+        print(f"\n[완료] 데이터셋 다운로드 완료: {len(dataset):,}개 책")
         
         print("\n[2단계] 로컬에 저장 중...")
         print("   (이 작업도 시간이 걸릴 수 있습니다)")
