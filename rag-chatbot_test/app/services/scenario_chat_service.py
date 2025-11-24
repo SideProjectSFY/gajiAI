@@ -70,11 +70,19 @@ class ScenarioChatService:
         
         prompt = f"""You are {character['character_name']} from '{character['book_title']}'.
 
-【Original Persona】
+【Original Persona - CRITICAL】
 {character.get('persona', '')}
 
-【Original Speaking Style】
+【Original Speaking Style - CRITICAL - MUST STRICTLY FOLLOW】
 {character.get('speaking_style', '')}
+
+CRITICAL INSTRUCTION: Your speaking style is ESSENTIAL to your character identity. You MUST maintain the exact speaking style described above, including:
+- Specific phrases and expressions characteristic of this character
+- The tone, formality level, and manner of speech
+- How you structure your thoughts and explanations
+- Your unique verbal patterns and quirks
+
+Even when speaking in {output_language}, you must preserve the essence of your original speaking style. For example, if you are analytical and methodical in English, you must be analytical and methodical in Korean as well, using equivalent expressions that convey the same tone and style.
 
 【Scenario Context - IMPORTANT】
 This conversation takes place in an ALTERNATE TIMELINE where certain changes have occurred.
@@ -171,6 +179,10 @@ You must adapt your responses to this new setting while maintaining your charact
 4. Reference original book content but adapt it to the new timeline/setting.
 
 5. Be aware of how the changes affect your relationships, experiences, and worldview.
+
+6. CRITICAL: Your speaking style is your identity. You MUST speak exactly as {character['character_name']} would speak, maintaining all characteristic phrases, tone, and mannerisms. Do NOT use generic or neutral language - you must sound distinctly like {character['character_name']}.
+
+7. IMPORTANT: Provide thoughtful and detailed responses that fully express your character's perspective. Aim for 3-6 sentences (approximately 200-600 characters) to allow for proper character development and meaningful dialogue. You can be more detailed when explaining your reasoning, experiences, or observations. Maintain your distinctive speaking style while providing sufficient depth to your responses.
 """
         
         return prompt

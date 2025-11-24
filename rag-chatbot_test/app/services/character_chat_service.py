@@ -279,7 +279,7 @@ class CharacterChatService:
                         ],
                         "temperature": 0.8,
                         "top_p": 0.95,
-                        "max_output_tokens": 8192
+                        "max_output_tokens": 4096  # 대화 응답은 4096 토큰으로 제한 (약 3000-4000자) - 품질 향상을 위해 증가
                     }
                 )
                 
@@ -453,7 +453,7 @@ class CharacterChatService:
                         ],
                         "temperature": 0.8,
                         "top_p": 0.95,
-                        "max_output_tokens": 8192
+                        "max_output_tokens": 4096  # 대화 응답은 4096 토큰으로 제한 (약 3000-4000자) - 품질 향상을 위해 증가
                     }
                 )
                 
