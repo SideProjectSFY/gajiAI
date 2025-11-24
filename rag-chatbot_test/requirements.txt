@@ -35,9 +35,13 @@ structlog>=25.1.0
 datasets>=3.3.0
 gutenbergpy>=0.3.5
 pandas>=2.3.0
+pyarrow>=14.0.1  # For parquet files
 
 # 전처리
 nltk>=3.9.1
+
+# 진행률 표시
+tqdm>=4.66.1
 
 # 유틸리티
 python-dotenv>=1.1.1
