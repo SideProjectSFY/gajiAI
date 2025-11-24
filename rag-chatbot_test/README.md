@@ -1,15 +1,16 @@
-# Gaji AI Backend - Character Chat
+# Gaji AI Backend - Character Chat & What If Scenarios
 
-**책 속 인물과 대화하는 AI 챗봇** (Gemini File Search 기반)
+**책 속 인물과 대화하고 "What If" 시나리오를 탐험하는 AI 챗봇** (Gemini File Search 기반)
 
 ## 🎭 프로젝트 소개
 
-이 프로젝트는 Gemini의 File Search 기능을 활용하여 사용자가 책 속 등장인물과 몰입감 있는 대화를 나눌 수 있는 AI 챗봇 서비스입니다.
+이 프로젝트는 Gemini의 File Search 기능을 활용하여 사용자가 책 속 등장인물과 몰입감 있는 대화를 나눌 수 있는 AI 챗봇 서비스입니다. 또한 "What If" 시나리오를 생성하여 캐릭터의 속성, 사건, 배경을 변경한 대체 타임라인을 탐험할 수 있습니다.
 
 ### 주요 특징
 
 - 📚 **원본 텍스트 기반**: 구텐베르크 프로젝트의 고전 문학 작품 활용
 - 🎭 **페르소나 시스템**: 각 캐릭터의 성격, 말투, 가치관을 반영한 대화
+- 🔀 **What If 시나리오**: 캐릭터 속성, 사건, 배경 변경을 통한 대체 타임라인 생성
 - 🔍 **자동 인용**: Gemini File Search가 원문 출처를 자동으로 제공
 - 💬 **스트리밍 응답**: 실시간 대화 경험
 - 🔑 **API 키 로테이션**: 여러 API 키 자동 전환으로 안정적인 서비스
@@ -154,6 +155,195 @@ data: {"chunk": " 그분을", "character_name": "Elizabeth Bennet"}
 data: [DONE]
 ```
 
+## 🔀 What If 시나리오 API
+
+### 1. 시나리오 생성
+
+```http
+POST /scenario/create
+Content-Type: application/json
+
+{
+  "scenario_name": "헤르미온이가 슬리데린에 배정되었다면?",
+  "book_title": "Pride and Prejudice",
+  "character_name": "Elizabeth Bennet",
+  "is_public": false,
+  "character_property_changes": {
+    "enabled": true,
+    "description": "그리핀도르 대신 슬리데린에 배정되고, 야망이 더 강해짐"
+  },
+  "event_alterations": {
+    "enabled": false
+  },
+  "setting_modifications": {
+    "enabled": false
+  }
+}
+```
+
+**응답**:
+```json
+{
+  "scenario_id": "scenario_123",
+  "scenario_name": "헤르미온이가 슬리데린에 배정되었다면?",
+  "book_title": "Pride and Prejudice",
+  "character_name": "Elizabeth Bennet",
+  "creator_id": "default_user",
+  "is_public": false,
+  "created_at": "2024-01-01T00:00:00Z"
+}
+```
+
+### 2. 첫 대화 시작 (원본 시나리오)
+
+```http
+POST /scenario/{scenario_id}/first-conversation
+Content-Type: application/json
+
+{
+  "initial_message": "안녕하세요, 헤르미온이님!",
+  "conversation_id": null
+}
+```
+
+**응답**:
+```json
+{
+  "response": "안녕하세요...",
+  "conversation_id": "conv_123",
+  "turn_count": 1,
+  "max_turns": 5,
+  "is_regenerable": true,
+  "is_saved": false
+}
+```
+
+### 3. 첫 대화 계속 (턴 2~5)
+
+```http
+POST /scenario/{scenario_id}/first-conversation/continue
+Content-Type: application/json
+
+{
+  "conversation_id": "conv_123",
+  "message": "슬리데린에 배정된 후 어떤 변화가 있었나요?"
+}
+```
+
+### 4. 첫 대화 최종 컨펌 (5턴 완료 후)
+
+```http
+POST /scenario/{scenario_id}/first-conversation/confirm
+Content-Type: application/json
+
+{
+  "conversation_id": "conv_123",
+  "action": "save"  // 또는 "cancel"
+}
+```
+
+**응답**:
+```json
+{
+  "success": true,
+  "message": "대화가 시나리오에 저장되었습니다.",
+  "scenario_id": "scenario_123"
+}
+```
+
+### 5. 공개 시나리오 목록 조회
+
+```http
+GET /scenario/public?book_title=Pride and Prejudice&character_name=Elizabeth Bennet&sort=popular
+```
+
+**응답**:
+```json
+{
+  "scenarios": [
+    {
+      "scenario_id": "scenario_123",
+      "scenario_name": "헤르미온이가 슬리데린에 배정되었다면?",
+      "book_title": "Pride and Prejudice",
+      "character_name": "Elizabeth Bennet",
+      "creator_id": "user_123",
+      "fork_count": 5,
+      "created_at": "2024-01-01T00:00:00Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+### 6. 시나리오 상세 조회
+
+```http
+GET /scenario/{scenario_id}
+```
+
+**응답**:
+```json
+{
+  "scenario_id": "scenario_123",
+  "scenario_name": "헤르미온이가 슬리데린에 배정되었다면?",
+  "book_title": "Pride and Prejudice",
+  "character_name": "Elizabeth Bennet",
+  "character_property_changes": {...},
+  "event_alterations": {...},
+  "setting_modifications": {...},
+  "first_conversation": [...],
+  "can_fork": true
+}
+```
+
+### 7. 시나리오 Fork
+
+```http
+POST /scenario/{scenario_id}/fork
+Content-Type: application/json
+
+{
+  "initial_message": "안녕하세요!"
+}
+```
+
+**응답**:
+```json
+{
+  "forked_scenario_id": "forked_scenario_456",
+  "original_scenario_id": "scenario_123",
+  "response": "안녕하세요...",
+  "conversation_id": "conv_456",
+  "turn_count": 1,
+  "max_turns": 5,
+  "is_temporary": true
+}
+```
+
+### 8. Fork된 시나리오 대화 계속
+
+```http
+POST /scenario/{scenario_id}/fork/{forked_scenario_id}/continue
+Content-Type: application/json
+
+{
+  "conversation_id": "conv_456",
+  "message": "다음 질문..."
+}
+```
+
+### 9. Fork된 시나리오 대화 컨펌
+
+```http
+POST /scenario/{scenario_id}/fork/{forked_scenario_id}/confirm-conversation
+Content-Type: application/json
+
+{
+  "conversation_id": "conv_456",
+  "action": "save"  // 또는 "cancel"
+}
+```
+
 ## 🏗️ 프로젝트 구조
 
 ```
@@ -162,19 +352,27 @@ rag-chatbot_test/
 │   ├── main.py                          # FastAPI 메인
 │   ├── routers/
 │   │   ├── character_chat.py            # 캐릭터 대화 API
+│   │   ├── scenario.py                   # What If 시나리오 API
 │   │   └── chat.py                      # 레거시 RAG API
 │   └── services/
 │       ├── character_chat_service.py    # 캐릭터 대화 서비스
+│       ├── scenario_management_service.py # 시나리오 관리 서비스
+│       ├── scenario_chat_service.py     # 시나리오 대화 서비스
 │       ├── api_key_manager.py           # API 키 관리
 │       ├── rag_service.py               # 레거시 RAG 서비스
 │       └── question_classifier.py       # 질문 분류기
 ├── scripts/
 │   ├── collect_data.py                  # 책 검색 및 저장
 │   ├── setup_file_search.py             # File Search Store 설정
+│   ├── download_dataset.py              # 데이터셋 다운로드
 │   ├── preprocess_text.py               # 텍스트 전처리 (레거시)
 │   └── import_to_chromadb.py            # ChromaDB 임포트 (레거시)
+├── gradio_test/
+│   ├── app.py                           # Gradio UI (What If 시나리오 테스트)
+│   └── requirements.txt                 # Gradio 의존성
 ├── data/
-│   ├── origin_txt/                      # 원본 책 텍스트 (55개)
+│   ├── origin_txt/                      # 원본 책 텍스트
+│   ├── origin_dataset/                  # 다운로드된 데이터셋
 │   ├── cache/                           # 메타데이터 캐시
 │   ├── characters.json                  # 캐릭터 정보
 │   └── file_search_store_info.json      # File Search Store 정보
@@ -263,6 +461,12 @@ Gemini File Search
 - Server-Sent Events (SSE)
 - 낮은 지연시간
 
+### 5. What If 시나리오 시스템
+- **시나리오 생성**: 캐릭터 속성, 사건, 배경 변경을 통한 대체 타임라인 생성
+- **첫 대화**: 시나리오에 맞춘 캐릭터와의 대화 (최대 5턴)
+- **시나리오 Fork**: 다른 사용자의 시나리오를 기반으로 새로운 대화 시작
+- **공개 시나리오**: 커뮤니티와 시나리오 공유 및 탐색
+
 ## 📚 추가 문서
 
 - [마이그레이션 가이드](MIGRATION_GUIDE.md) - v1.0 → v2.0 전환
@@ -272,7 +476,7 @@ Gemini File Search
 
 ## 💡 사용 예시
 
-### Python 클라이언트
+### Python 클라이언트 - 캐릭터 대화
 
 ```python
 import requests
@@ -298,19 +502,128 @@ result = response.json()
 print(f"\n{result['character_name']}: {result['response']}")
 ```
 
+### Python 클라이언트 - What If 시나리오
+
+```python
+import requests
+
+# 1. 시나리오 생성
+scenario_request = {
+    "scenario_name": "헤르미온이가 슬리데린에 배정되었다면?",
+    "book_title": "Pride and Prejudice",
+    "character_name": "Elizabeth Bennet",
+    "is_public": False,
+    "character_property_changes": {
+        "enabled": True,
+        "description": "그리핀도르 대신 슬리데린에 배정되고, 야망이 더 강해짐"
+    }
+}
+
+response = requests.post(
+    "http://localhost:8000/scenario/create",
+    json=scenario_request
+)
+scenario = response.json()
+scenario_id = scenario['scenario_id']
+print(f"시나리오 생성: {scenario_id}")
+
+# 2. 첫 대화 시작
+conversation_request = {
+    "initial_message": "안녕하세요!",
+    "conversation_id": None
+}
+
+response = requests.post(
+    f"http://localhost:8000/scenario/{scenario_id}/first-conversation",
+    json=conversation_request
+)
+result = response.json()
+print(f"응답: {result['response']}")
+print(f"턴: {result['turn_count']}/{result['max_turns']}")
+
+# 3. 대화 계속 (턴 2~5)
+continue_request = {
+    "conversation_id": result['conversation_id'],
+    "message": "슬리데린에 배정된 후 어떤 변화가 있었나요?"
+}
+
+response = requests.post(
+    f"http://localhost:8000/scenario/{scenario_id}/first-conversation/continue",
+    json=continue_request
+)
+result = response.json()
+print(f"응답: {result['response']}")
+
+# 4. 대화 저장 (5턴 완료 후)
+confirm_request = {
+    "conversation_id": result['conversation_id'],
+    "action": "save"
+}
+
+response = requests.post(
+    f"http://localhost:8000/scenario/{scenario_id}/first-conversation/confirm",
+    json=confirm_request
+)
+print(response.json()['message'])
+
+# 5. 공개 시나리오 조회
+response = requests.get(
+    "http://localhost:8000/scenario/public",
+    params={"sort": "popular"}
+)
+scenarios = response.json()['scenarios']
+print(f"\n공개 시나리오: {len(scenarios)}개")
+
+# 6. 시나리오 Fork
+fork_request = {
+    "initial_message": "안녕하세요!"
+}
+
+response = requests.post(
+    f"http://localhost:8000/scenario/{scenarios[0]['scenario_id']}/fork",
+    json=fork_request
+)
+forked = response.json()
+print(f"Fork된 시나리오 ID: {forked['forked_scenario_id']}")
+```
+
 ### cURL
 
 ```bash
 # 캐릭터 목록
 curl http://localhost:8000/character/list
 
-# 대화
+# 캐릭터 대화
 curl -X POST http://localhost:8000/character/chat \
   -H "Content-Type: application/json" \
   -d '{
     "character_name": "Elizabeth Bennet",
     "message": "안녕하세요!",
     "conversation_history": []
+  }'
+
+# 시나리오 생성
+curl -X POST http://localhost:8000/scenario/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "scenario_name": "헤르미온이가 슬리데린에 배정되었다면?",
+    "book_title": "Pride and Prejudice",
+    "character_name": "Elizabeth Bennet",
+    "is_public": false,
+    "character_property_changes": {
+      "enabled": true,
+      "description": "그리핀도르 대신 슬리데린에 배정되고, 야망이 더 강해짐"
+    }
+  }'
+
+# 공개 시나리오 목록
+curl "http://localhost:8000/scenario/public?sort=popular"
+
+# 시나리오 Fork
+curl -X POST http://localhost:8000/scenario/{scenario_id}/fork \
+  -H "Content-Type: application/json" \
+  -d '{
+    "initial_message": "안녕하세요!"
   }'
 ```
 
