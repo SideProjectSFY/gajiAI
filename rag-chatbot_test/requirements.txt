@@ -3,18 +3,18 @@ fastapi==0.115.0
 uvicorn[standard]==0.32.0
 pydantic==2.9.2
 
-# Gemini AI (최신 버전 사용 - File Search 기능 지원)
-google-genai>=1.0.0
+# Gemini AI (latest version with File Search support)
+google-genai==1.52.0
 
-#
+# Environment variables
 python-dotenv==1.0.1
 
-#
+# Data processing
 pandas==2.2.3
 numpy==2.1.3
 
 # Hugging Face Datasets
 datasets==3.1.0
 
-#
+# Progress bar
 tqdm==4.66.5
