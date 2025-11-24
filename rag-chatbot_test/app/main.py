@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import structlog
 
 from app.config import settings
+from app.routers import chat
+from app.api import validation
 from app.services.vectordb_client import get_vectordb_client
 from app.services.gemini_client import GeminiClient
 from app.celery_app import celery_app
@@ -63,6 +65,7 @@ from app.routers import character_chat, scenario, chat
 app.include_router(character_chat.router)
 app.include_router(scenario.router)
 app.include_router(chat.router)
+app.include_router(validation.router)
 
 
 @app.on_event("startup")
