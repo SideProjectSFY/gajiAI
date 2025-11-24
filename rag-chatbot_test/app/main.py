@@ -10,6 +10,7 @@ import structlog
 
 from app.config import settings
 from app.routers import chat
+from app.api import validation
 from app.services.vectordb_client import get_vectordb_client
 from app.services.gemini_client import GeminiClient
 from app.celery_app import celery_app
@@ -61,6 +62,7 @@ logger.info("fastapi_initialized", cors_allowed=settings.spring_boot_url)
 
 # 라우터 등록
 app.include_router(chat.router)
+app.include_router(validation.router)
 
 
 @app.on_event("startup")
