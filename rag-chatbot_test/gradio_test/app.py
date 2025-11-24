@@ -165,10 +165,10 @@ def start_first_conversation(message, scenario_id, history):
     global current_conversation_id, current_turn_count
     
     if not scenario_chat_service or not scenario_id:
-        return history, "❌ 시나리오를 먼저 생성해주세요.", "턴: 0/5", gr.update(visible=False), gr.update(visible=False)
+        return history, "❌ 시나리오를 먼저 생성해주세요.", "턴: 0/5", gr.update(visible=False), gr.update(visible=False), ""
     
     if not message.strip():
-        return history, "", "턴: 0/5", gr.update(visible=False), gr.update(visible=False)
+        return history, "", "턴: 0/5", gr.update(visible=False), gr.update(visible=False), ""
     
     try:
         result = scenario_chat_service.first_conversation(
@@ -182,7 +182,7 @@ def start_first_conversation(message, scenario_id, history):
         current_conversation_id = result['conversation_id']
         current_turn_count = result['turn_count']
         
-        # 대화 기록에 추가
+        # 대화 기록에 추가 (전체 응답 표시)
         history = history + [
             {"role": "user", "content": message},
             {"role": "assistant", "content": result['response']}
@@ -196,12 +196,12 @@ def start_first_conversation(message, scenario_id, history):
         
         # 5턴 완료 시 저장/취소 버튼 표시
         if current_turn_count >= result['max_turns']:
-            return history, status_msg, turn_info, gr.update(visible=True), gr.update(visible=True)
+            return history, status_msg, turn_info, gr.update(visible=True), gr.update(visible=True), ""
         else:
-            return history, status_msg, turn_info, gr.update(visible=False), gr.update(visible=False)
+            return history, status_msg, turn_info, gr.update(visible=False), gr.update(visible=False), ""
     
     except Exception as e:
-        return history, f"❌ 대화 시작 실패: {str(e)}", "턴: 0/5", gr.update(visible=False), gr.update(visible=False)
+        return history, f"❌ 대화 시작 실패: {str(e)}", "턴: 0/5", gr.update(visible=False), gr.update(visible=False), ""
 
 
 def continue_conversation(message, scenario_id, conversation_id, history):
@@ -209,10 +209,10 @@ def continue_conversation(message, scenario_id, conversation_id, history):
     global current_turn_count
     
     if not scenario_chat_service or not scenario_id:
-        return history, "❌ 시나리오를 먼저 생성해주세요.", "턴: 0/5", gr.update(visible=False), gr.update(visible=False)
+        return history, "❌ 시나리오를 먼저 생성해주세요.", "턴: 0/5", gr.update(visible=False), gr.update(visible=False), ""
     
     if not message.strip():
-        return history, "", f"턴: {current_turn_count}/5", gr.update(visible=False), gr.update(visible=False)
+        return history, "", f"턴: {current_turn_count}/5", gr.update(visible=False), gr.update(visible=False), ""
     
     try:
         result = scenario_chat_service.first_conversation(
@@ -225,7 +225,7 @@ def continue_conversation(message, scenario_id, conversation_id, history):
         
         current_turn_count = result['turn_count']
         
-        # 대화 기록에 추가
+        # 대화 기록에 추가 (전체 응답 표시)
         history = history + [
             {"role": "user", "content": message},
             {"role": "assistant", "content": result['response']}
@@ -239,12 +239,12 @@ def continue_conversation(message, scenario_id, conversation_id, history):
         
         # 5턴 완료 시 저장/취소 버튼 표시
         if current_turn_count >= result['max_turns']:
-            return history, status_msg, turn_info, gr.update(visible=True), gr.update(visible=True)
+            return history, status_msg, turn_info, gr.update(visible=True), gr.update(visible=True), ""
         else:
-            return history, status_msg, turn_info, gr.update(visible=False), gr.update(visible=False)
+            return history, status_msg, turn_info, gr.update(visible=False), gr.update(visible=False), ""
     
     except Exception as e:
-        return history, f"❌ 대화 계속 실패: {str(e)}", f"턴: {current_turn_count}/5", gr.update(visible=False), gr.update(visible=False)
+        return history, f"❌ 대화 계속 실패: {str(e)}", f"턴: {current_turn_count}/5", gr.update(visible=False), gr.update(visible=False), ""
 
 
 def confirm_conversation(scenario_id, conversation_id, action):
@@ -284,7 +284,8 @@ def confirm_conversation(scenario_id, conversation_id, action):
 init_success, init_message = initialize_service()
 
 # Gradio UI 구성
-with gr.Blocks(title="Gaji What If Scenario Chat", theme=gr.themes.Soft()) as demo:
+# Gradio 6.0에서는 theme를 launch()에서 설정
+with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
     gr.Markdown(
         """
         # 🔀 Gaji What If Scenario Chat
@@ -417,9 +418,9 @@ with gr.Blocks(title="Gaji What If Scenario Chat", theme=gr.themes.Soft()) as de
                     
                     chatbot = gr.Chatbot(
                         height=500,
-                        label="대화창",
-                        type="messages",
-                        show_copy_button=True
+                        label="대화창"
+                        # Gradio 6.0에서는 type, show_copy_button 파라미터가 제거됨
+                        # Chatbot은 기본적으로 긴 텍스트를 표시할 수 있음
                     )
                     
                     with gr.Row():
@@ -473,8 +474,9 @@ with gr.Blocks(title="Gaji What If Scenario Chat", theme=gr.themes.Soft()) as de
     )
     
     # 메시지 전송
-    def on_submit(message, history, scenario_id_display_val):
-        if not scenario_id_display_val or scenario_id_display_val == "":
+    def on_submit(message, history, current_scenario_display_val):
+        # 전역 변수에서 시나리오 ID 가져오기
+        if not current_scenario_id:
             return history, "❌ 시나리오를 먼저 생성해주세요.", "턴: 0/5", gr.update(visible=False), gr.update(visible=False), ""
         
         if not message.strip():
@@ -482,44 +484,44 @@ with gr.Blocks(title="Gaji What If Scenario Chat", theme=gr.themes.Soft()) as de
         
         # 첫 대화인지 계속 대화인지 확인
         if not current_conversation_id:
-            return start_first_conversation(message, scenario_id_display_val, history)
+            return start_first_conversation(message, current_scenario_id, history)
         else:
-            return continue_conversation(message, scenario_id_display_val, current_conversation_id, history)
+            return continue_conversation(message, current_scenario_id, current_conversation_id, history)
     
     msg.submit(
         fn=on_submit,
-        inputs=[msg, chatbot, scenario_id_display],
+        inputs=[msg, chatbot, current_scenario_display],  # current_scenario_display는 참조용 (실제로는 전역 변수 사용)
         outputs=[chatbot, conversation_status, turn_info, save_btn, cancel_btn, msg]
     )
     
     submit_btn.click(
         fn=on_submit,
-        inputs=[msg, chatbot, scenario_id_display],
+        inputs=[msg, chatbot, current_scenario_display],  # current_scenario_display는 참조용 (실제로는 전역 변수 사용)
         outputs=[chatbot, conversation_status, turn_info, save_btn, cancel_btn, msg]
     )
     
     # 대화 저장/취소
-    def on_save(scenario_id_display_val, history):
-        if not scenario_id_display_val or not current_conversation_id:
+    def on_save(current_scenario_display_val, history):
+        if not current_scenario_id or not current_conversation_id:
             return "❌ 저장할 대화가 없습니다.", []
-        result_msg = confirm_conversation(scenario_id_display_val, current_conversation_id, "save")
+        result_msg = confirm_conversation(current_scenario_id, current_conversation_id, "save")
         return result_msg, []
     
-    def on_cancel(scenario_id_display_val, history):
-        if not scenario_id_display_val or not current_conversation_id:
+    def on_cancel(current_scenario_display_val, history):
+        if not current_scenario_id or not current_conversation_id:
             return "❌ 취소할 대화가 없습니다.", []
-        result_msg = confirm_conversation(scenario_id_display_val, current_conversation_id, "cancel")
+        result_msg = confirm_conversation(current_scenario_id, current_conversation_id, "cancel")
         return result_msg, []
     
     save_btn.click(
         fn=on_save,
-        inputs=[scenario_id_display, chatbot],
+        inputs=[current_scenario_display, chatbot],
         outputs=[confirm_result, chatbot]
     )
     
     cancel_btn.click(
         fn=on_cancel,
-        inputs=[scenario_id_display, chatbot],
+        inputs=[current_scenario_display, chatbot],
         outputs=[confirm_result, chatbot]
     )
     
@@ -530,10 +532,11 @@ with gr.Blocks(title="Gaji What If Scenario Chat", theme=gr.themes.Soft()) as de
 
 
 if __name__ == "__main__":
-    # 로컬 실행
     demo.launch(
         server_name="0.0.0.0",
         server_port=7860,
-        share=True,  # 공개 URL 생성 (72시간 동안 유효)
-        show_error=True
+        share=False,
+        show_error=True,
+        quiet=False,
+        theme=gr.themes.Soft()
     )
