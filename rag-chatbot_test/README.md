@@ -17,14 +17,14 @@
 
 ## 🎬 사용 가능한 캐릭터
 
-| 캐릭터 | 책 | 저자 |
-|--------|-----|------|
-| Victor Frankenstein | Frankenstein | Mary Shelley |
-| Elizabeth Bennet | Pride and Prejudice | Jane Austen |
-| Jay Gatsby | The Great Gatsby | F. Scott Fitzgerald |
-| Romeo Montague | Romeo and Juliet | William Shakespeare |
-| Tom Sawyer | The Adventures of Tom Sawyer | Mark Twain |
-| Sherlock Holmes | The Adventures of Sherlock Holmes | Arthur Conan Doyle |
+| 캐릭터              | 책                                | 저자                |
+| ------------------- | --------------------------------- | ------------------- |
+| Victor Frankenstein | Frankenstein                      | Mary Shelley        |
+| Elizabeth Bennet    | Pride and Prejudice               | Jane Austen         |
+| Jay Gatsby          | The Great Gatsby                  | F. Scott Fitzgerald |
+| Romeo Montague      | Romeo and Juliet                  | William Shakespeare |
+| Tom Sawyer          | The Adventures of Tom Sawyer      | Mark Twain          |
+| Sherlock Holmes     | The Adventures of Sherlock Holmes | Arthur Conan Doyle  |
 
 ## 🚀 빠른 시작
 
@@ -66,6 +66,7 @@ py scripts/setup_file_search.py
 ```
 
 **선택 옵션**:
+
 - 모든 책 업로드 (55개)
 - 주요 책만 업로드 (5개 추천)
 - 개수 지정
@@ -78,6 +79,8 @@ py scripts/setup_file_search.py
 # 터미널에서 캐릭터와 대화
 py test_character_chat.py
 ```
+
+### 5. API 서버 실행
 
 ### 5. API 서버 실행
 
@@ -97,6 +100,7 @@ GET /character/list
 ```
 
 **응답**:
+
 ```json
 {
   "characters": [
@@ -124,6 +128,7 @@ Content-Type: application/json
 ```
 
 **응답**:
+
 ```json
 {
   "response": "아... 제 창조물이라니. 그것은 제 인생 최대의 실수였습니다...",
@@ -148,6 +153,7 @@ Content-Type: application/json
 ```
 
 **응답** (Server-Sent Events):
+
 ```
 data: {"chunk": "처음에는", "character_name": "Elizabeth Bennet"}
 data: {"chunk": " 그분을", "character_name": "Elizabeth Bennet"}
@@ -182,6 +188,7 @@ Content-Type: application/json
 ```
 
 **응답**:
+
 ```json
 {
   "scenario_id": "scenario_123",
@@ -207,6 +214,7 @@ Content-Type: application/json
 ```
 
 **응답**:
+
 ```json
 {
   "response": "안녕하세요...",
@@ -243,6 +251,7 @@ Content-Type: application/json
 ```
 
 **응답**:
+
 ```json
 {
   "success": true,
@@ -258,6 +267,7 @@ GET /scenario/public?book_title=Pride and Prejudice&character_name=Elizabeth Ben
 ```
 
 **응답**:
+
 ```json
 {
   "scenarios": [
@@ -282,6 +292,7 @@ GET /scenario/{scenario_id}
 ```
 
 **응답**:
+
 ```json
 {
   "scenario_id": "scenario_123",
@@ -308,6 +319,7 @@ Content-Type: application/json
 ```
 
 **응답**:
+
 ```json
 {
   "forked_scenario_id": "forked_scenario_456",
@@ -348,6 +360,7 @@ Content-Type: application/json
 
 ```
 rag-chatbot_test/
+rag-chatbot_test/
 ├── app/
 │   ├── main.py                          # FastAPI 메인
 │   ├── routers/
@@ -386,16 +399,19 @@ rag-chatbot_test/
 ## 🔧 기술 스택
 
 ### 백엔드
+
 - **FastAPI**: 고성능 웹 프레임워크
 - **Gemini 2.0 Flash**: Google의 최신 AI 모델
 - **File Search**: Gemini의 RAG 기능 (자동 임베딩 + 벡터 검색)
 
 ### 데이터
+
 - **Gutenberg Project**: 고전 문학 작품 48,000+ 권
 - **Hugging Face Datasets**: 효율적인 데이터 로딩
 - **Pandas**: 메타데이터 관리
 
 ### 주요 라이브러리
+
 - `google-genai`: Gemini 새 SDK
 - `python-dotenv`: 환경 변수 관리
 - `datasets`: Hugging Face 데이터셋
@@ -403,6 +419,7 @@ rag-chatbot_test/
 ## 📊 시스템 아키텍처
 
 ### 기존 시스템 (v1.0) - 레거시
+
 ```
 사용자 질문
     ↓
@@ -418,6 +435,7 @@ Gemini로 답변 생성
 ```
 
 ### 새로운 시스템 (v2.0) - 현재
+
 ```
 사용자 질문
     ↓
@@ -440,6 +458,7 @@ Gemini File Search
 ## 🎯 주요 기능
 
 ### 1. 품질 기반 책 선택
+
 - 4가지 기준으로 최적 버전 자동 선택
   - 텍스트 길이 (40점)
   - Gutenberg ID (30점)
@@ -447,21 +466,25 @@ Gemini File Search
   - 텍스트 품질 (10점)
 
 ### 2. 페르소나 시스템
+
 - 각 캐릭터의 성격, 말투, 가치관 반영
 - 책의 내용과 맥락 기반 응답
 - 자연스럽고 몰입감 있는 대화
 
 ### 3. API 키 로테이션
+
 - 여러 API 키 자동 전환
 - 할당량 초과 시 자동 재시도
 - 실패한 키 일정 시간 후 재활성화
 
 ### 4. 스트리밍 응답
+
 - 실시간 대화 경험
 - Server-Sent Events (SSE)
 - 낮은 지연시간
 
 ### 5. What If 시나리오 시스템
+
 - **시나리오 생성**: 캐릭터 속성, 사건, 배경 변경을 통한 대체 타임라인 생성
 - **첫 대화**: 시나리오에 맞춘 캐릭터와의 대화 (최대 5턴)
 - **시나리오 Fork**: 다른 사용자의 시나리오를 기반으로 새로운 대화 시작
@@ -630,6 +653,7 @@ curl -X POST http://localhost:8000/scenario/{scenario_id}/fork \
 ## 🔐 보안 및 제한사항
 
 ### API 제한
+
 - **File Search Store 크기**:
   - Free tier: 1GB
   - 현재 사용량: ~30MB (55개 책)
@@ -637,6 +661,7 @@ curl -X POST http://localhost:8000/scenario/{scenario_id}/fork \
 - **Rate Limit**: API 키별 할당량 적용
 
 ### 권장사항
+
 - 프로덕션 환경에서는 CORS 설정 제한
 - API 키는 환경 변수로 관리
 - 대화 기록은 최근 5개만 유지
@@ -644,16 +669,19 @@ curl -X POST http://localhost:8000/scenario/{scenario_id}/fork \
 ## 🐛 문제 해결
 
 ### File Search Store 정보를 찾을 수 없습니다
+
 ```bash
 # 해결: File Search Store 설정 실행
 py scripts/setup_file_search.py
 ```
 
 ### API 할당량 초과
+
 - 여러 API 키 설정 (`.env`의 `GEMINI_API_KEYS`)
 - 자동 로테이션 활성화됨
 
 ### 캐릭터를 찾을 수 없습니다
+
 - `data/characters.json` 파일 확인
 - 캐릭터 이름 정확히 입력
 
