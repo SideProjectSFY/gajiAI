@@ -532,11 +532,25 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(
-        server_name="0.0.0.0",
-        server_port=7860,
-        share=False,
-        show_error=True,
-        quiet=False,
-        theme=gr.themes.Soft()
-    )
+    try:
+        # public 링크 생성을 시도
+        demo.launch(
+            server_name="localhost",
+            server_port=7860,
+            share=True,
+            show_error=True,
+            quiet=False,
+            theme=gr.themes.Soft()
+        )
+    except Exception as e:
+        # public 링크 생성 실패 시 local URL만 사용
+        print(f"⚠️ Public 링크 생성 실패: {str(e)}")
+        print("📍 Local URL만 사용합니다: http://localhost:7860")
+        demo.launch(
+            server_name="localhost",
+            server_port=7860,
+            share=False,
+            show_error=True,
+            quiet=False,
+            theme=gr.themes.Soft()
+        )
