@@ -1,20 +1,49 @@
-# FastAPI
-fastapi==0.115.0
-uvicorn[standard]==0.32.0
-pydantic==2.9.2
+# FastAPI Core
+fastapi>=0.121.3
+uvicorn[standard]>=0.38.0
+pydantic>=2.12.0
+pydantic-settings>=2.12.0
 
-# Gemini AI (latest version with File Search support)
-google-genai==1.52.0
+# Gemini AI
+google-genai>=1.52.0
+google-generativeai>=0.8.3  # 레거시 (마이그레이션 권장)
 
-# Environment variables
-python-dotenv==1.0.1
+# Vector DB
+chromadb>=1.3.5
+pinecone>=8.0.0
 
-# Data processing
-pandas==2.2.3
-numpy==2.1.3
+# Async HTTP Client (Spring Boot callbacks)
+httpx>=0.28.1
 
-# Hugging Face Datasets
-datasets==3.1.0
+# Celery & Redis (Async task queue + Long Polling)
+# OPTIONAL: Redis is now optional - falls back to in-memory backend if not available
+# For production use, Redis is strongly recommended for Celery backend
+celery>=5.5.3
+redis>=7.1.0  # OPTIONAL: Can be omitted for development (uses memory backend)
 
-# Progress bar
-tqdm==4.66.5
+# Retry Logic
+tenacity>=9.0.0
+
+# Logging
+structlog>=25.1.0
+
+# 데이터 수집
+datasets>=3.3.0
+gutenbergpy>=0.3.5
+
+# 데이터 처리
+pandas>=2.3.0
+numpy>=2.1.3
+
+# 전처리
+nltk>=3.9.1
+
+# 유틸리티
+python-dotenv>=1.1.1
+requests>=2.32.3
+tqdm>=4.66.5
+
+# Testing
+pytest>=8.3.4
+pytest-asyncio>=1.3.0
+pytest-cov>=7.0.0
