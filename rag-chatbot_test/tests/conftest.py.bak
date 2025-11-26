@@ -6,10 +6,9 @@ pytest 설정 및 fixture
 
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 from app.main import app
 from app.routers.chat import get_rag_service
-from app.routers.character_chat import get_character_service
 
 
 @pytest.fixture
@@ -29,40 +28,10 @@ def mock_rag_service():
 
 
 @pytest.fixture
-def mock_character_service():
-    """Mock Character Chat Service"""
-    mock = Mock()
-    mock.get_available_characters.return_value = [
-        {
-            "name": "Hermione Granger",
-            "book_title": "Harry Potter",
-            "description": "Brilliant witch and loyal friend"
-        }
-    ]
-    mock.get_character_info.return_value = {
-        "name": "Hermione Granger",
-        "book_title": "Harry Potter",
-        "description": "Brilliant witch and loyal friend",
-        "personality_traits": ["intelligent", "loyal", "brave"]
-    }
-    mock.chat.return_value = {
-        "response": "Mock character response",
-        "character_name": "Hermione Granger",
-        "book_title": "Harry Potter",
-        "grounding_metadata": {}
-    }
-    mock.stream_chat.return_value = iter([
-        {"token": "Mock "}, {"token": "streaming "}, {"token": "response"}
-    ])
-    return mock
-
-
-@pytest.fixture
-def client(mock_rag_service, mock_character_service):
-    """FastAPI 테스트 클라이언트 with mocked dependencies"""
+def client(mock_rag_service):
+    """FastAPI 테스트 클라이언트 with mocked RAG service dependency"""
     # Override FastAPI dependency injection
     app.dependency_overrides[get_rag_service] = lambda: mock_rag_service
-    app.dependency_overrides[get_character_service] = lambda: mock_character_service
     
     test_client = TestClient(app)
     yield test_client
@@ -79,4 +48,3 @@ def mock_env(monkeypatch):
     monkeypatch.setenv("CHROMA_PATH", "./test_chroma_data")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379")
     monkeypatch.setenv("SPRING_BOOT_URL", "http://localhost:8080")
-    monkeypatch.setenv("APP_ENV", "test")
