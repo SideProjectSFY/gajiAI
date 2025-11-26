@@ -7,8 +7,10 @@ What If 시나리오를 생성하고 시나리오대로 캐릭터와 대화하�
 
 import os
 import sys
+import json
 import gradio as gr
 from pathlib import Path
+from typing import List, Dict, Optional
 
 # 프로젝트 루트를 Python 경로에 추가
 current_dir = Path(__file__).parent
@@ -21,15 +23,14 @@ from app.services.scenario_management_service import ScenarioManagementService
 from app.services.scenario_chat_service import ScenarioChatService
 from app.services.api_key_manager import get_api_key_manager
 
-# 전역 변수
+# 전역 변수 (서비스 인스턴스는 공유 가능)
 character_service = None
 scenario_service = None
 scenario_chat_service = None
 available_characters = []
-current_scenario_id = None
-current_conversation_id = None
-current_turn_count = 0
-max_turns = 5
+
+# 세션별 상태는 gr.State로 관리 (전역 변수 제거)
+# current_scenario_id, current_conversation_id, current_turn_count는 gr.State로 이동
 
 
 def initialize_service():
@@ -54,75 +55,142 @@ def initialize_service():
         return False, f"❌ 서비스 초기화 실패: {str(e)}"
 
 
-def get_character_names():
-    """캐릭터 이름 목록 반환"""
-    if not available_characters:
+def load_books_from_characters_folder() -> List[Dict]:
+    """data/characters/ 폴더에서 책 목록 로드"""
+    characters_dir = project_root / "data" / "characters"
+    books = []
+    
+    if characters_dir.exists() and characters_dir.is_dir():
+        json_files = list(characters_dir.glob("*.json"))
+        for json_file in json_files:
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    book_data = json.load(f)
+                    books.append({
+                        'book_title': book_data.get('book_title', ''),
+                        'author': book_data.get('author', ''),
+                        'filepath': str(json_file)
+                    })
+            except Exception:
+                continue
+    
+    # 책 제목으로 정렬
+    books.sort(key=lambda x: x['book_title'])
+    return books
+
+
+def get_book_list():
+    """책 목록 반환 (드롭다운용)"""
+    books = load_books_from_characters_folder()
+    if not books:
         return []
-    return [char['character_name'] for char in available_characters]
+    # "책 제목 - 저자" 형식으로 표시
+    return [f"{book['book_title']} - {book['author']}" for book in books]
 
 
-def get_character_info(character_name):
+def get_characters_by_book(book_display: str) -> List[str]:
+    """선택된 책의 캐릭터 목록 반환"""
+    if not book_display:
+        return []
+    
+    # "책 제목 - 저자" 형식에서 책 제목 추출
+    book_title = book_display.split(" - ")[0] if " - " in book_display else book_display
+    
+    characters_dir = project_root / "data" / "characters"
+    if not characters_dir.exists():
+        return []
+    
+    # 책 제목으로 파일 찾기 (대략적 매칭)
+    json_files = list(characters_dir.glob("*.json"))
+    for json_file in json_files:
+        try:
+            with open(json_file, 'r', encoding='utf-8') as f:
+                book_data = json.load(f)
+                if book_data.get('book_title', '') == book_title:
+                    characters = [char['character_name'] for char in book_data.get('characters', [])]
+                    return characters
+        except Exception:
+            continue
+    
+    return []
+
+
+def get_character_info(book_display: str, character_name: str, language: str = "ko"):
     """캐릭터 정보 가져오기"""
-    if not character_service or not character_name:
+    if not character_service or not character_name or not book_display:
         return ""
     
+    # 책 제목 추출
+    book_title = book_display.split(" - ")[0] if " - " in book_display else book_display
+    
     try:
-        character = character_service.get_character_info(character_name)
+        character = character_service.get_character_info(character_name, book_title)
         if character:
-            info = f"""
-**캐릭터**: {character['character_name']}
-**책**: {character['book_title']}
-**저자**: {character['author']}
+            # 언어에 맞는 라벨 선택
+            if language == "ko":
+                persona_label = "캐릭터 설명"
+                persona_text = character.get('persona_ko') or character.get('persona', '')
+            else:
+                persona_label = "Character Description"
+                persona_text = character.get('persona_en') or character.get('persona', '')
+            
+            info = f"""**캐릭터 / Character**: {character['character_name']}
+**책 / Book**: {character['book_title']}
+**저자 / Author**: {character['author']}
+
+**{persona_label}**:
+{persona_text}
 """
-            if 'persona' in character:
-                info += f"\n**페르소나**: {character['persona'][:200]}..."
             return info
-        return "캐릭터를 찾을 수 없습니다."
+        return "캐릭터를 찾을 수 없습니다." if language == "ko" else "Character not found."
     except Exception as e:
-        return f"오류: {str(e)}"
+        return f"오류: {str(e)}" if language == "ko" else f"Error: {str(e)}"
 
 
 def create_scenario(
     scenario_name,
+    book_display,
     character_name,
-    character_property_enabled,
     character_property_desc,
-    event_alteration_enabled,
     event_alteration_desc,
-    setting_modification_enabled,
     setting_modification_desc,
-    is_public
+    is_public,
+    session_state  # gr.State로 세션별 상태 전달
 ):
     """시나리오 생성"""
-    global current_scenario_id, current_conversation_id, current_turn_count
-    
     if not scenario_service:
-        return "❌ 서비스를 먼저 초기화해주세요.", "", "시나리오를 먼저 생성해주세요.", []
+        return "❌ 서비스를 먼저 초기화해주세요.", "", "시나리오를 먼저 생성해주세요.", [], session_state
     
-    if not scenario_name or not character_name:
-        return "❌ 시나리오 이름과 캐릭터를 선택해주세요.", "", "시나리오를 먼저 생성해주세요.", []
+    if not scenario_name or not book_display or not character_name:
+        return "❌ 시나리오 이름, 책, 주인공을 모두 선택해주세요.", "", "시나리오를 먼저 생성해주세요.", [], session_state
     
     try:
-        # 캐릭터 정보 가져오기
-        character = character_service.get_character_info(character_name)
-        if not character:
-            return f"❌ 캐릭터를 찾을 수 없습니다: {character_name}", "", "시나리오를 먼저 생성해주세요.", []
+        # 책 제목 추출
+        book_title = book_display.split(" - ")[0] if " - " in book_display else book_display
         
-        book_title = character['book_title']
+        # 캐릭터 정보 가져오기
+        character = character_service.get_character_info(character_name, book_title)
+        if not character:
+            return f"❌ 캐릭터를 찾을 수 없습니다: {character_name} (책: {book_title})", "", "시나리오를 먼저 생성해주세요.", [], session_state
+        
+        # 텍스트 입력 여부로 자동 활성화 판단
+        character_property_enabled = bool(character_property_desc and character_property_desc.strip())
+        event_alteration_enabled = bool(event_alteration_desc and event_alteration_desc.strip())
+        setting_modification_enabled = bool(setting_modification_desc and setting_modification_desc.strip())
         
         # 시나리오 설명 구성
         descriptions = {
             "character_property_changes": {
                 "enabled": character_property_enabled,
-                "description": character_property_desc if character_property_enabled else ""
+                "description": character_property_desc.strip() if character_property_enabled else ""
             },
             "event_alterations": {
                 "enabled": event_alteration_enabled,
-                "description": event_alteration_desc if event_alteration_enabled else ""
+                "description": event_alteration_desc.strip() if event_alteration_enabled else ""
             },
             "setting_modifications": {
                 "enabled": setting_modification_enabled,
-                "description": setting_modification_desc if setting_modification_enabled else ""
+                "description": setting_modification_desc.strip() if setting_modification_enabled else ""
             }
         }
         
@@ -136,9 +204,10 @@ def create_scenario(
             is_public=is_public
         )
         
-        current_scenario_id = result['scenario_id']
-        current_conversation_id = None
-        current_turn_count = 0
+        # 세션별 상태 업데이트
+        session_state['scenario_id'] = result['scenario_id']
+        session_state['conversation_id'] = None
+        session_state['turn_count'] = 0
         
         scenario_info = f"""
 **시나리오 생성 완료!**
@@ -146,41 +215,41 @@ def create_scenario(
 **시나리오 이름**: {scenario_name}
 **캐릭터**: {character_name}
 **책**: {book_title}
-**시나리오 ID**: {current_scenario_id}
+**시나리오 ID**: {session_state['scenario_id']}
 
 이제 첫 대화를 시작하세요!
 """
         
-        return scenario_info, current_scenario_id, current_scenario_id, []
+        return scenario_info, session_state['scenario_id'], session_state['scenario_id'], [], session_state
     
     except Exception as e:
-        return f"❌ 시나리오 생성 실패: {str(e)}", "", "시나리오를 먼저 생성해주세요.", []
+        return f"❌ 시나리오 생성 실패: {str(e)}", "", "시나리오를 먼저 생성해주세요.", [], session_state
 
 
 # 대화 기록 저장 (세션별)
 conversation_histories = {}
 
-def start_first_conversation(message, scenario_id, history):
+def start_first_conversation(message, scenario_id, history, output_language, session_state):
     """첫 대화 시작"""
-    global current_conversation_id, current_turn_count
-    
     if not scenario_chat_service or not scenario_id:
-        return history, "❌ 시나리오를 먼저 생성해주세요.", "턴: 0/5", gr.update(visible=False), gr.update(visible=False), ""
+        error_msg = "❌ 시나리오를 먼저 생성해주세요." if output_language == "ko" else "❌ Please create a scenario first."
+        return history, error_msg, "턴: 0/5" if output_language == "ko" else "Turn: 0/5", gr.update(visible=False), gr.update(visible=False), "", session_state
     
     if not message.strip():
-        return history, "", "턴: 0/5", gr.update(visible=False), gr.update(visible=False), ""
+        return history, "", "턴: 0/5" if output_language == "ko" else "Turn: 0/5", gr.update(visible=False), gr.update(visible=False), "", session_state
     
     try:
         result = scenario_chat_service.first_conversation(
             scenario_id=scenario_id,
             initial_message=message,
-            output_language="ko",
+            output_language=output_language,
             is_creator=True,
-            conversation_id=current_conversation_id
+            conversation_id=session_state.get('conversation_id')
         )
         
-        current_conversation_id = result['conversation_id']
-        current_turn_count = result['turn_count']
+        # 세션별 상태 업데이트
+        session_state['conversation_id'] = result['conversation_id']
+        session_state['turn_count'] = result['turn_count']
         
         # 대화 기록에 추가 (전체 응답 표시)
         history = history + [
@@ -189,41 +258,49 @@ def start_first_conversation(message, scenario_id, history):
         ]
         
         # 세션별 기록 저장
-        conversation_histories[current_conversation_id] = history
+        conversation_histories[result['conversation_id']] = history
         
-        status_msg = f"턴 {current_turn_count}/{result['max_turns']}"
-        turn_info = f"턴: {current_turn_count}/{result['max_turns']}"
+        if output_language == "ko":
+            status_msg = f"턴 {session_state['turn_count']}/{result['max_turns']}"
+            turn_info = f"턴: {session_state['turn_count']}/{result['max_turns']}"
+        else:
+            status_msg = f"Turn {session_state['turn_count']}/{result['max_turns']}"
+            turn_info = f"Turn: {session_state['turn_count']}/{result['max_turns']}"
         
         # 5턴 완료 시 저장/취소 버튼 표시
-        if current_turn_count >= result['max_turns']:
-            return history, status_msg, turn_info, gr.update(visible=True), gr.update(visible=True), ""
+        if session_state['turn_count'] >= result['max_turns']:
+            return history, status_msg, turn_info, gr.update(visible=True), gr.update(visible=True), "", session_state
         else:
-            return history, status_msg, turn_info, gr.update(visible=False), gr.update(visible=False), ""
+            return history, status_msg, turn_info, gr.update(visible=False), gr.update(visible=False), "", session_state
     
     except Exception as e:
-        return history, f"❌ 대화 시작 실패: {str(e)}", "턴: 0/5", gr.update(visible=False), gr.update(visible=False), ""
+        error_msg = f"❌ 대화 시작 실패: {str(e)}" if output_language == "ko" else f"❌ Failed to start conversation: {str(e)}"
+        turn_msg = "턴: 0/5" if output_language == "ko" else "Turn: 0/5"
+        return history, error_msg, turn_msg, gr.update(visible=False), gr.update(visible=False), "", session_state
 
 
-def continue_conversation(message, scenario_id, conversation_id, history):
+def continue_conversation(message, scenario_id, conversation_id, history, output_language, session_state):
     """대화 계속"""
-    global current_turn_count
-    
     if not scenario_chat_service or not scenario_id:
-        return history, "❌ 시나리오를 먼저 생성해주세요.", "턴: 0/5", gr.update(visible=False), gr.update(visible=False), ""
+        error_msg = "❌ 시나리오를 먼저 생성해주세요." if output_language == "ko" else "❌ Please create a scenario first."
+        turn_msg = "턴: 0/5" if output_language == "ko" else "Turn: 0/5"
+        return history, error_msg, turn_msg, gr.update(visible=False), gr.update(visible=False), "", session_state
     
     if not message.strip():
-        return history, "", f"턴: {current_turn_count}/5", gr.update(visible=False), gr.update(visible=False), ""
+        turn_msg = f"턴: {session_state.get('turn_count', 0)}/5" if output_language == "ko" else f"Turn: {session_state.get('turn_count', 0)}/5"
+        return history, "", turn_msg, gr.update(visible=False), gr.update(visible=False), "", session_state
     
     try:
         result = scenario_chat_service.first_conversation(
             scenario_id=scenario_id,
             initial_message=message,
-            output_language="ko",
+            output_language=output_language,
             is_creator=True,
             conversation_id=conversation_id
         )
         
-        current_turn_count = result['turn_count']
+        # 세션별 상태 업데이트
+        session_state['turn_count'] = result['turn_count']
         
         # 대화 기록에 추가 (전체 응답 표시)
         history = history + [
@@ -234,25 +311,29 @@ def continue_conversation(message, scenario_id, conversation_id, history):
         # 세션별 기록 업데이트
         conversation_histories[conversation_id] = history
         
-        status_msg = f"턴 {current_turn_count}/{result['max_turns']}"
-        turn_info = f"턴: {current_turn_count}/{result['max_turns']}"
+        if output_language == "ko":
+            status_msg = f"턴 {session_state['turn_count']}/{result['max_turns']}"
+            turn_info = f"턴: {session_state['turn_count']}/{result['max_turns']}"
+        else:
+            status_msg = f"Turn {session_state['turn_count']}/{result['max_turns']}"
+            turn_info = f"Turn: {session_state['turn_count']}/{result['max_turns']}"
         
         # 5턴 완료 시 저장/취소 버튼 표시
-        if current_turn_count >= result['max_turns']:
-            return history, status_msg, turn_info, gr.update(visible=True), gr.update(visible=True), ""
+        if session_state['turn_count'] >= result['max_turns']:
+            return history, status_msg, turn_info, gr.update(visible=True), gr.update(visible=True), "", session_state
         else:
-            return history, status_msg, turn_info, gr.update(visible=False), gr.update(visible=False), ""
+            return history, status_msg, turn_info, gr.update(visible=False), gr.update(visible=False), "", session_state
     
     except Exception as e:
-        return history, f"❌ 대화 계속 실패: {str(e)}", f"턴: {current_turn_count}/5", gr.update(visible=False), gr.update(visible=False), ""
+        error_msg = f"❌ 대화 계속 실패: {str(e)}" if output_language == "ko" else f"❌ Failed to continue conversation: {str(e)}"
+        turn_msg = f"턴: {session_state.get('turn_count', 0)}/5" if output_language == "ko" else f"Turn: {session_state.get('turn_count', 0)}/5"
+        return history, error_msg, turn_msg, gr.update(visible=False), gr.update(visible=False), "", session_state
 
 
-def confirm_conversation(scenario_id, conversation_id, action):
+def confirm_conversation(scenario_id, conversation_id, action, session_state):
     """대화 최종 확인"""
-    global current_scenario_id, current_conversation_id, current_turn_count
-    
     if not scenario_chat_service or not scenario_id or not conversation_id:
-        return "❌ 시나리오와 대화를 먼저 생성해주세요."
+        return "❌ 시나리오와 대화를 먼저 생성해주세요.", session_state
     
     try:
         result = scenario_chat_service.confirm_first_conversation(
@@ -265,19 +346,22 @@ def confirm_conversation(scenario_id, conversation_id, action):
             # 대화 기록 초기화
             if conversation_id in conversation_histories:
                 del conversation_histories[conversation_id]
-            current_conversation_id = None
-            current_turn_count = 0
-            return f"✅ 대화가 저장되었습니다!\n\n{result.get('message', '')}"
+            # 세션별 상태 초기화
+            session_state['scenario_id'] = None
+            session_state['conversation_id'] = None
+            session_state['turn_count'] = 0
+            return f"✅ 대화가 저장되었습니다!\n\n{result.get('message', '')}", session_state
         else:
             # 대화 기록 초기화
             if conversation_id in conversation_histories:
                 del conversation_histories[conversation_id]
-            current_conversation_id = None
-            current_turn_count = 0
-            return "❌ 대화가 취소되었습니다."
+            # 대화만 초기화 (시나리오는 유지)
+            session_state['conversation_id'] = None
+            session_state['turn_count'] = 0
+            return "❌ 대화가 취소되었습니다.", session_state
     
     except Exception as e:
-        return f"❌ 확인 실패: {str(e)}"
+        return f"❌ 확인 실패: {str(e)}", session_state
 
 
 # 서비스 초기화
@@ -300,6 +384,15 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
         """
     )
     
+    # 언어 선택 (상단)
+    with gr.Row():
+        language_radio = gr.Radio(
+            choices=[("한국어", "ko"), ("English", "en")],
+            value="ko",
+            label="🌐 언어 선택 / Language Selection",
+            interactive=True
+        )
+    
     # 상태 표시
     status_text = gr.Textbox(
         value=init_message,
@@ -313,7 +406,38 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
         with gr.Tab("1️⃣ 시나리오 생성"):
             with gr.Row():
                 with gr.Column(scale=1):
-                    gr.Markdown("### 📝 시나리오 기본 정보")
+                    gr.Markdown("### 📝 캐릭터 선택")
+                    
+                    book_dropdown = gr.Dropdown(
+                        choices=get_book_list(),
+                        label="📚 책 선택",
+                        value=get_book_list()[0] if get_book_list() else None,
+                        interactive=True
+                    )
+                    
+                    # 초기 책 선택 시 캐릭터 목록 설정
+                    initial_book = get_book_list()[0] if get_book_list() else None
+                    initial_characters = get_characters_by_book(initial_book) if initial_book else []
+                    initial_character = initial_characters[0] if initial_characters else None
+                    initial_character_info = get_character_info(initial_book, initial_character, "ko") if initial_book and initial_character else "책과 주인공을 선택해주세요."
+                    
+                    character_dropdown = gr.Dropdown(
+                        choices=initial_characters,
+                        label="🎭 주인공 선택",
+                        value=initial_character,
+                        interactive=True
+                    )
+                    
+                    character_info = gr.Textbox(
+                        value=initial_character_info,
+                        label="캐릭터 정보",
+                        lines=15,
+                        max_lines=20,
+                        interactive=False
+                    )
+                
+                with gr.Column(scale=2):
+                    gr.Markdown("### 📝 시나리오 설정")
                     
                     scenario_name = gr.Textbox(
                         label="시나리오 이름",
@@ -321,32 +445,15 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
                         interactive=True
                     )
                     
-                    character_dropdown = gr.Dropdown(
-                        choices=get_character_names(),
-                        label="🎭 캐릭터 선택",
-                        value=get_character_names()[0] if get_character_names() else None,
-                        interactive=True
-                    )
-                    
-                    character_info = gr.Markdown(
-                        value="캐릭터를 선택하면 정보가 표시됩니다.",
-                        label="캐릭터 정보"
-                    )
-                    
                     is_public = gr.Checkbox(
                         label="공개 시나리오",
                         value=False,
                         info="다른 사용자들이 볼 수 있게 공개"
                     )
-                
-                with gr.Column(scale=2):
+                    
                     gr.Markdown("### 🔀 What If 변경사항")
                     
-                    with gr.Accordion("1. 캐릭터 속성 변경", open=False):
-                        character_property_enabled = gr.Checkbox(
-                            label="활성화",
-                            value=False
-                        )
+                    with gr.Accordion("1. 캐릭터 속성 변경", open=True):
                         character_property_desc = gr.Textbox(
                             label="변경 설명",
                             placeholder="예: 헤르미온이가 그리핀도르 대신 슬리데린에 배정되고, 야망이 더 강해졌다면?",
@@ -354,11 +461,7 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
                             interactive=True
                         )
                     
-                    with gr.Accordion("2. 사건 변경", open=False):
-                        event_alteration_enabled = gr.Checkbox(
-                            label="활성화",
-                            value=False
-                        )
+                    with gr.Accordion("2. 사건 변경", open=True):
                         event_alteration_desc = gr.Textbox(
                             label="변경 설명",
                             placeholder="예: 게츠비가 데이지를 만나지 않았다면?",
@@ -366,11 +469,7 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
                             interactive=True
                         )
                     
-                    with gr.Accordion("3. 배경 변경", open=False):
-                        setting_modification_enabled = gr.Checkbox(
-                            label="활성화",
-                            value=False
-                        )
+                    with gr.Accordion("3. 배경 변경", open=True):
                         setting_modification_desc = gr.Textbox(
                             label="변경 설명",
                             placeholder="예: 오만과 편견이 2024년 서울에서 일어났다면?",
@@ -449,80 +548,129 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
     def set_example3():
         return "이 변화가 당신의 감정과 가치관에 어떤 영향을 미쳤나요?"
     
-    # 캐릭터 선택 시 정보 업데이트
-    character_dropdown.change(
-        fn=get_character_info,
-        inputs=[character_dropdown],
+    def on_book_selected(book_display, language):
+        """책 선택 시 해당 책의 캐릭터 목록 업데이트"""
+        if not book_display:
+            msg = "책을 선택해주세요." if language == "ko" else "Please select a book."
+            return gr.update(choices=[], value=None), gr.update(value=msg)
+        
+        characters = get_characters_by_book(book_display)
+        if characters:
+            msg = "주인공을 선택해주세요." if language == "ko" else "Please select a character."
+            return gr.update(choices=characters, value=characters[0]), gr.update(value=msg)
+        else:
+            msg = "이 책의 캐릭터를 찾을 수 없습니다." if language == "ko" else "No characters found for this book."
+            return gr.update(choices=[], value=None), gr.update(value=msg)
+    
+    def on_character_selected(book_display, character_name, language):
+        """캐릭터 선택 시 정보 업데이트"""
+        if not book_display or not character_name:
+            return "책과 주인공을 선택해주세요." if language == "ko" else "Please select a book and character."
+        return get_character_info(book_display, character_name, language)
+    
+    def on_language_changed(language, book_display, character_name):
+        """언어 변경 시 캐릭터 정보 업데이트"""
+        if book_display and character_name:
+            return get_character_info(book_display, character_name, language)
+        return "책과 주인공을 선택해주세요." if language == "ko" else "Please select a book and character."
+    
+    # 언어 변경 시 캐릭터 정보 업데이트
+    language_radio.change(
+        fn=on_language_changed,
+        inputs=[language_radio, book_dropdown, character_dropdown],
         outputs=[character_info]
     )
+    
+    # 책 선택 시 캐릭터 목록 업데이트
+    book_dropdown.change(
+        fn=on_book_selected,
+        inputs=[book_dropdown, language_radio],
+        outputs=[character_dropdown, character_info]
+    )
+    
+    # 캐릭터 선택 시 정보 업데이트
+    character_dropdown.change(
+        fn=on_character_selected,
+        inputs=[book_dropdown, character_dropdown, language_radio],
+        outputs=[character_info]
+    )
+    
+    # 세션별 상태 관리 (gr.State 사용) - 시나리오 생성 전에 정의
+    session_state = gr.State(value={
+        'scenario_id': None,
+        'conversation_id': None,
+        'turn_count': 0
+    })
     
     # 시나리오 생성
     create_scenario_btn.click(
         fn=create_scenario,
         inputs=[
             scenario_name,
+            book_dropdown,
             character_dropdown,
-            character_property_enabled,
             character_property_desc,
-            event_alteration_enabled,
             event_alteration_desc,
-            setting_modification_enabled,
             setting_modification_desc,
-            is_public
+            is_public,
+            session_state
         ],
-        outputs=[scenario_result, scenario_id_display, current_scenario_display, chatbot]
+        outputs=[scenario_result, scenario_id_display, current_scenario_display, chatbot, session_state]
     )
     
     # 메시지 전송
-    def on_submit(message, history, current_scenario_display_val):
-        # 전역 변수에서 시나리오 ID 가져오기
-        if not current_scenario_id:
-            return history, "❌ 시나리오를 먼저 생성해주세요.", "턴: 0/5", gr.update(visible=False), gr.update(visible=False), ""
+    def on_submit(message, history, current_scenario_display_val, language, state):
+        # 세션별 상태에서 시나리오 ID 가져오기
+        if not state.get('scenario_id'):
+            error_msg = "❌ 시나리오를 먼저 생성해주세요." if language == "ko" else "❌ Please create a scenario first."
+            turn_msg = "턴: 0/5" if language == "ko" else "Turn: 0/5"
+            return history, error_msg, turn_msg, gr.update(visible=False), gr.update(visible=False), "", state
         
         if not message.strip():
-            return history, "", f"턴: {current_turn_count}/5", gr.update(visible=False), gr.update(visible=False), ""
+            turn_msg = f"턴: {state.get('turn_count', 0)}/5" if language == "ko" else f"Turn: {state.get('turn_count', 0)}/5"
+            return history, "", turn_msg, gr.update(visible=False), gr.update(visible=False), "", state
         
         # 첫 대화인지 계속 대화인지 확인
-        if not current_conversation_id:
-            return start_first_conversation(message, current_scenario_id, history)
+        if not state.get('conversation_id'):
+            return start_first_conversation(message, state['scenario_id'], history, language, state)
         else:
-            return continue_conversation(message, current_scenario_id, current_conversation_id, history)
+            return continue_conversation(message, state['scenario_id'], state['conversation_id'], history, language, state)
     
     msg.submit(
         fn=on_submit,
-        inputs=[msg, chatbot, current_scenario_display],  # current_scenario_display는 참조용 (실제로는 전역 변수 사용)
-        outputs=[chatbot, conversation_status, turn_info, save_btn, cancel_btn, msg]
+        inputs=[msg, chatbot, current_scenario_display, language_radio, session_state],
+        outputs=[chatbot, conversation_status, turn_info, save_btn, cancel_btn, msg, session_state]
     )
     
     submit_btn.click(
         fn=on_submit,
-        inputs=[msg, chatbot, current_scenario_display],  # current_scenario_display는 참조용 (실제로는 전역 변수 사용)
-        outputs=[chatbot, conversation_status, turn_info, save_btn, cancel_btn, msg]
+        inputs=[msg, chatbot, current_scenario_display, language_radio, session_state],
+        outputs=[chatbot, conversation_status, turn_info, save_btn, cancel_btn, msg, session_state]
     )
     
     # 대화 저장/취소
-    def on_save(current_scenario_display_val, history):
-        if not current_scenario_id or not current_conversation_id:
-            return "❌ 저장할 대화가 없습니다.", []
-        result_msg = confirm_conversation(current_scenario_id, current_conversation_id, "save")
-        return result_msg, []
+    def on_save(current_scenario_display_val, history, state):
+        if not state.get('scenario_id') or not state.get('conversation_id'):
+            return "❌ 저장할 대화가 없습니다.", [], state
+        result_msg, updated_state = confirm_conversation(state['scenario_id'], state['conversation_id'], "save", state)
+        return result_msg, [], updated_state
     
-    def on_cancel(current_scenario_display_val, history):
-        if not current_scenario_id or not current_conversation_id:
-            return "❌ 취소할 대화가 없습니다.", []
-        result_msg = confirm_conversation(current_scenario_id, current_conversation_id, "cancel")
-        return result_msg, []
+    def on_cancel(current_scenario_display_val, history, state):
+        if not state.get('scenario_id') or not state.get('conversation_id'):
+            return "❌ 취소할 대화가 없습니다.", [], state
+        result_msg, updated_state = confirm_conversation(state['scenario_id'], state['conversation_id'], "cancel", state)
+        return result_msg, [], updated_state
     
     save_btn.click(
         fn=on_save,
-        inputs=[current_scenario_display, chatbot],
-        outputs=[confirm_result, chatbot]
+        inputs=[current_scenario_display, chatbot, session_state],
+        outputs=[confirm_result, chatbot, session_state]
     )
     
     cancel_btn.click(
         fn=on_cancel,
-        inputs=[current_scenario_display, chatbot],
-        outputs=[confirm_result, chatbot]
+        inputs=[current_scenario_display, chatbot, session_state],
+        outputs=[confirm_result, chatbot, session_state]
     )
     
     # 예제 버튼

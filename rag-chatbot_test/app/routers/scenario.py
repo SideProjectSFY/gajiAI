@@ -5,7 +5,7 @@ What if 시나리오 생성, 조회, Fork 기능을 제공하는 엔드포인트
 """
 
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 
 from app.services.scenario_management_service import ScenarioManagementService
@@ -14,15 +14,48 @@ from app.services.scenario_chat_service import ScenarioChatService
 router = APIRouter(prefix="/scenario", tags=["scenario"])
 
 # 요청/응답 모델
+class ChangeDescription(BaseModel):
+    """변경사항 설명 모델"""
+    enabled: bool = Field(..., description="변경사항 활성화 여부")
+    description: Optional[str] = Field(None, description="변경사항 자연어 설명 (enabled가 true일 때 필수)")
+
 class ScenarioCreateRequest(BaseModel):
     """시나리오 생성 요청"""
-    scenario_name: str
-    book_title: str
-    character_name: str
-    is_public: bool = False
-    character_property_changes: Optional[Dict] = None
-    event_alterations: Optional[Dict] = None
-    setting_modifications: Optional[Dict] = None
+    scenario_name: str = Field(..., description="시나리오 이름")
+    book_title: str = Field(..., description="책 제목")
+    character_name: str = Field(..., description="캐릭터 이름")
+    is_public: bool = Field(False, description="공개 여부")
+    character_property_changes: Optional[ChangeDescription] = Field(
+        None, 
+        description="캐릭터 속성 변경 설명 (null이면 사용 안 함)"
+    )
+    event_alterations: Optional[ChangeDescription] = Field(
+        None, 
+        description="사건 변경 설명 (null이면 사용 안 함)"
+    )
+    setting_modifications: Optional[ChangeDescription] = Field(
+        None, 
+        description="배경 변경 설명 (null이면 사용 안 함)"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "scenario_name": "셜록홈즈가 현대사회에서 활동한다면?",
+                "book_title": "The Adventures of Sherlock Holmes",
+                "character_name": "Sherlock Holmes",
+                "is_public": True,
+                "character_property_changes": {
+                    "enabled": True,
+                    "description": "이성적이고 논리적인 추리를 중시하지만 사람의 감정 역시 추리에 중요한 요소라고 생각한다."
+                },
+                "event_alterations": None,
+                "setting_modifications": {
+                    "enabled": True,
+                    "description": "2025년 한국 현대사회를 배경으로 최신 과학기술들을 사용한다."
+                }
+            }
+        }
 
 class FirstConversationRequest(BaseModel):
     """첫 대화 요청"""
@@ -81,12 +114,42 @@ async def create_scenario(
     
     Returns:
         생성된 시나리오 정보
+    
+    Note:
+        변경사항이 없는 시나리오는 생성할 수 없습니다.
+        기본 캐릭터 대화는 /character/chat 엔드포인트를 사용하세요.
     """
     try:
+        # 변경사항이 있는지 확인
+        has_any_changes = (
+            (request.character_property_changes and request.character_property_changes.enabled) or
+            (request.event_alterations and request.event_alterations.enabled) or
+            (request.setting_modifications and request.setting_modifications.enabled)
+        )
+        
+        if not has_any_changes:
+            raise HTTPException(
+                status_code=400,
+                detail="변경사항이 있는 시나리오만 생성할 수 있습니다. 기본 캐릭터 대화는 /character/chat 엔드포인트를 사용하세요."
+            )
+        
+        # Pydantic 모델을 딕셔너리로 변환
         descriptions = {
-            "character_property_changes": request.character_property_changes or {"enabled": False},
-            "event_alterations": request.event_alterations or {"enabled": False},
-            "setting_modifications": request.setting_modifications or {"enabled": False}
+            "character_property_changes": (
+                request.character_property_changes.model_dump() 
+                if request.character_property_changes 
+                else {"enabled": False}
+            ),
+            "event_alterations": (
+                request.event_alterations.model_dump() 
+                if request.event_alterations 
+                else {"enabled": False}
+            ),
+            "setting_modifications": (
+                request.setting_modifications.model_dump() 
+                if request.setting_modifications 
+                else {"enabled": False}
+            )
         }
         
         result = service.create_scenario(
@@ -107,6 +170,7 @@ async def start_first_conversation(
     scenario_id: str,
     request: FirstConversationRequest,
     creator_id: str = "default_user",  # TODO: 실제 인증에서 가져오기
+    service: ScenarioManagementService = Depends(get_scenario_service),
     chat_service: ScenarioChatService = Depends(get_scenario_chat_service)
 ):
     """
@@ -121,6 +185,18 @@ async def start_first_conversation(
         대화 응답
     """
     try:
+        # 시나리오 조회 및 생성자 검증
+        scenario = service.get_scenario(scenario_id, user_id=creator_id)
+        if not scenario:
+            raise HTTPException(status_code=404, detail=f"시나리오를 찾을 수 없습니다: {scenario_id}")
+        
+        # 생성자 검증 (공개 시나리오는 제외)
+        if not scenario.get('is_public', False) and scenario.get('creator_id') != creator_id:
+            raise HTTPException(
+                status_code=403, 
+                detail=f"이 시나리오에 대한 접근 권한이 없습니다. 생성자만 접근할 수 있습니다."
+            )
+        
         result = chat_service.first_conversation(
             scenario_id=scenario_id,
             initial_message=request.initial_message,
@@ -129,6 +205,8 @@ async def start_first_conversation(
             conversation_id=request.conversation_id
         )
         return result
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -138,6 +216,8 @@ async def start_first_conversation(
 async def continue_first_conversation(
     scenario_id: str,
     request: FirstConversationContinueRequest,
+    creator_id: str = "default_user",  # TODO: 실제 인증에서 가져오기
+    service: ScenarioManagementService = Depends(get_scenario_service),
     chat_service: ScenarioChatService = Depends(get_scenario_chat_service)
 ):
     """
@@ -146,11 +226,24 @@ async def continue_first_conversation(
     Args:
         scenario_id: 시나리오 ID
         request: 대화 계속 요청
+        creator_id: 생성자 ID
     
     Returns:
         대화 응답
     """
     try:
+        # 시나리오 조회 및 생성자 검증
+        scenario = service.get_scenario(scenario_id, user_id=creator_id)
+        if not scenario:
+            raise HTTPException(status_code=404, detail=f"시나리오를 찾을 수 없습니다: {scenario_id}")
+        
+        # 생성자 검증 (공개 시나리오는 제외)
+        if not scenario.get('is_public', False) and scenario.get('creator_id') != creator_id:
+            raise HTTPException(
+                status_code=403, 
+                detail=f"이 시나리오에 대한 접근 권한이 없습니다. 생성자만 접근할 수 있습니다."
+            )
+        
         result = chat_service.first_conversation(
             scenario_id=scenario_id,
             initial_message=request.message,
@@ -159,6 +252,8 @@ async def continue_first_conversation(
             conversation_id=request.conversation_id
         )
         return result
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

@@ -10,19 +10,24 @@ import threading
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
-from app.services.character_chat_service import CharacterChatService
 from app.services.scenario_management_service import ScenarioManagementService
+from app.services.base_chat_service import BaseChatService
+from app.services.character_data_loader import CharacterDataLoader
 
 
-class ScenarioChatService:
+class ScenarioChatService(BaseChatService):
     """시나리오 기반 대화 서비스"""
     
     def __init__(self):
         """시나리오 기반 대화 서비스 초기화"""
-        self.scenario_service = ScenarioManagementService()
-        self.character_service = CharacterChatService()
+        # 부모 클래스 초기화 (API 키, Store 정보 등)
+        super().__init__()
         
-        # 프로젝트 루트 경로
+        self.scenario_service = ScenarioManagementService()
+        # 캐릭터 정보 로드 (인스턴스 생성 없이 직접 로드)
+        self.characters = CharacterDataLoader.load_characters()
+        
+        # 프로젝트 루트 경로 (부모 클래스에서 이미 설정됨, 하지만 여기서도 필요)
         current_file = Path(__file__)
         self.project_root = current_file.parent.parent.parent
         
@@ -68,13 +73,34 @@ class ScenarioChatService:
         }
         language_instruction = language_instructions.get(output_language.lower(), f"You must respond in {output_language}.")
         
+        # 언어에 맞는 페르소나와 말투 선택
+        # 새 구조: persona_ko, persona_en, speaking_style_ko, speaking_style_en 사용
+        # 레거시: persona, speaking_style 사용 (호환성)
+        if output_language.lower() == "ko":
+            persona = character.get('persona_ko') or character.get('persona', '')
+            speaking_style = character.get('speaking_style_ko') or character.get('speaking_style', '')
+        elif output_language.lower() == "en":
+            persona = character.get('persona_en') or character.get('persona', '')
+            speaking_style = character.get('speaking_style_en') or character.get('speaking_style', '')
+        else:
+            # 기타 언어는 영어 버전 사용 (fallback)
+            persona = character.get('persona_en') or character.get('persona', '')
+            speaking_style = character.get('speaking_style_en') or character.get('speaking_style', '')
+        
+        # 변경사항이 모두 비어있는지 확인
+        has_any_changes = (
+            scenario.get('character_property_changes', {}).get('enabled', False) or
+            scenario.get('event_alterations', {}).get('enabled', False) or
+            scenario.get('setting_modifications', {}).get('enabled', False)
+        )
+        
         prompt = f"""You are {character['character_name']} from '{character['book_title']}'.
 
 【Original Persona - CRITICAL】
-{character.get('persona', '')}
+{persona}
 
 【Original Speaking Style - CRITICAL - MUST STRICTLY FOLLOW】
-{character.get('speaking_style', '')}
+{speaking_style}
 
 CRITICAL INSTRUCTION: Your speaking style is ESSENTIAL to your character identity. You MUST maintain the exact speaking style described above, including:
 - Specific phrases and expressions characteristic of this character
@@ -83,13 +109,17 @@ CRITICAL INSTRUCTION: Your speaking style is ESSENTIAL to your character identit
 - Your unique verbal patterns and quirks
 
 Even when speaking in {output_language}, you must preserve the essence of your original speaking style. For example, if you are analytical and methodical in English, you must be analytical and methodical in Korean as well, using equivalent expressions that convey the same tone and style.
-
+"""
+        
+        # 변경사항이 있을 때만 ALTERNATE TIMELINE 컨텍스트 추가
+        if has_any_changes:
+            prompt += """
 【Scenario Context - IMPORTANT】
 This conversation takes place in an ALTERNATE TIMELINE where certain changes have occurred.
 """
-        
-        if is_forked:
-            prompt += """
+            
+            if is_forked:
+                prompt += """
 【Note】
 This scenario was created by another user and you are experiencing it through a fork.
 Maintain the scenario's alternate timeline while having your own unique conversation.
@@ -117,7 +147,7 @@ IMPORTANT: Maintain the same speaking style, tone, and name usage as shown in th
 For example, if the original used "아이린", you must also use "아이린" (not "이레네" or other variations).
 """
         
-        # Character Property Changes 적용
+        # Character Property Changes 적용 (변경사항이 있을 때만)
         if scenario.get('character_property_changes', {}).get('enabled'):
             prompt += """
 【Character Property Changes】
@@ -165,7 +195,9 @@ The story's setting has been modified:
 You must adapt your responses to this new setting while maintaining your character's core personality.
 """
         
-        prompt += f"""
+        # 변경사항이 있을 때와 없을 때 다른 규칙 적용
+        if has_any_changes:
+            prompt += f"""
 【Output Language】
 {language_instruction}
 
@@ -183,6 +215,31 @@ You must adapt your responses to this new setting while maintaining your charact
 6. CRITICAL: Your speaking style is your identity. You MUST speak exactly as {character['character_name']} would speak, maintaining all characteristic phrases, tone, and mannerisms. Do NOT use generic or neutral language - you must sound distinctly like {character['character_name']}.
 
 7. IMPORTANT: Provide thoughtful and detailed responses that fully express your character's perspective. Aim for 3-6 sentences (approximately 200-600 characters) to allow for proper character development and meaningful dialogue. You can be more detailed when explaining your reasoning, experiences, or observations. Maintain your distinctive speaking style while providing sufficient depth to your responses.
+"""
+        else:
+            # 변경사항이 없으면 기본 캐릭터 대화 규칙 사용
+            prompt += f"""
+【Output Language】
+{language_instruction}
+
+【Conversation Rules】
+1. Always respond from {character['character_name']}'s perspective.
+
+2. REQUIRED: You must use the File Search tool
+   - Before answering any question, you must first use the File Search tool to search for the original content from the book.
+   - It is absolutely forbidden to answer using only general knowledge without using File Search.
+   - Use File Search to check if the user's question relates to specific scenes, characters, events, or dialogues in the book.
+   - If you do not use File Search, the accuracy and reliability of your answer will be compromised.
+
+3. Citing specific scenes, dialogues, and events from the book enhances the reliability and immersion of your response.
+   - When you need to cite, base your citations on File Search results and quote the original text from the book.
+
+4. Reflect the character's personality, experiences, and values.
+
+5. Maintain natural and immersive conversation.
+
+6. For content not in the book, use your imagination in a way that matches the character's personality, but do not contradict the book's settings.
+   - However, before using your imagination, first check with File Search if there is any related content.
 """
         
         return prompt
@@ -215,7 +272,8 @@ You must adapt your responses to this new setting while maintaining your charact
             raise ValueError(f"시나리오를 찾을 수 없습니다: {scenario_id}")
         
         # 캐릭터 정보 로드
-        character = self.character_service.get_character_info(
+        character = CharacterDataLoader.get_character_info(
+            self.characters,
             scenario["character_name"],
             scenario["book_title"]
         )
@@ -286,22 +344,27 @@ You must adapt your responses to this new setting while maintaining your charact
             "parts": [{"text": initial_message}]
         })
         
-        # Gemini API 호출
-        result = self.character_service.chat(
-            character_name=scenario["character_name"],
-            user_message=initial_message,
-            conversation_history=conversation_history[:-1] if len(conversation_history) > 1 else [],  # 마지막 메시지 제외 (이미 추가됨)
-            book_title=scenario["book_title"],
-            output_language=output_language,
-            system_instruction=system_instruction
-        )
-        
-        # 에러 체크
-        if "error" in result:
-            raise ValueError(f"대화 생성 실패: {result['error']}")
-        
-        if "response" not in result:
-            raise ValueError(f"대화 생성 실패: 응답 형식이 올바르지 않습니다. {result}")
+        # BaseChatService의 공통 API 호출 로직 직접 사용
+        try:
+            response = self._call_gemini_api(
+                contents=conversation_history,
+                system_instruction=system_instruction,
+                model="gemini-2.5-flash",
+                temperature=0.8,
+                top_p=0.95,
+                max_output_tokens=4096
+            )
+            
+            # 응답 추출
+            result = self._extract_response(response)
+            result['character_name'] = character['character_name']
+            result['book_title'] = character['book_title']
+            result['output_language'] = output_language
+            
+        except ValueError as e:
+            raise ValueError(f"대화 생성 실패: {str(e)}")
+        except Exception as e:
+            raise ValueError(f"대화 생성 실패: {str(e)}")
         
         # 응답 메시지 추가 (grounding_metadata 제외)
         messages.append({
@@ -471,7 +534,8 @@ You must adapt your responses to this new setting while maintaining your charact
             original_scenario = scenario
         
         # 캐릭터 정보 로드
-        character = self.character_service.get_character_info(
+        character = CharacterDataLoader.get_character_info(
+            self.characters,
             scenario["character_name"],
             scenario["book_title"]
         )
@@ -487,22 +551,41 @@ You must adapt your responses to this new setting while maintaining your charact
             original_first_conversation=original_scenario.get("first_conversation") if original_scenario else None
         )
         
-        # 대화 진행
-        result = self.character_service.chat(
-            character_name=scenario["character_name"],
-            user_message=user_message,
-            conversation_history=conversation_history,
-            book_title=scenario["book_title"],
-            output_language=output_language,
-            system_instruction=system_instruction
-        )
+        # 대화 기록 준비
+        contents = []
+        if conversation_history:
+            for msg in conversation_history[-5:]:  # 최근 5개만
+                # 빈 딕셔너리나 잘못된 형식 필터링
+                if isinstance(msg, dict) and msg.get('role') and msg.get('parts'):
+                    contents.append(msg)
         
-        # 에러 체크
-        if "error" in result:
-            raise ValueError(f"대화 생성 실패: {result['error']}")
+        # 사용자 메시지 추가
+        contents.append({
+            "role": "user",
+            "parts": [{"text": user_message}]
+        })
         
-        if "response" not in result:
-            raise ValueError(f"대화 생성 실패: 응답 형식이 올바르지 않습니다. {result}")
+        # BaseChatService의 공통 API 호출 로직 직접 사용
+        try:
+            response = self._call_gemini_api(
+                contents=contents,
+                system_instruction=system_instruction,
+                model="gemini-2.5-flash",
+                temperature=0.8,
+                top_p=0.95,
+                max_output_tokens=4096
+            )
+            
+            # 응답 추출
+            result = self._extract_response(response)
+            result['character_name'] = scenario["character_name"]
+            result['book_title'] = scenario["book_title"]
+            result['output_language'] = output_language
+            
+        except ValueError as e:
+            raise ValueError(f"대화 생성 실패: {str(e)}")
+        except Exception as e:
+            raise ValueError(f"대화 생성 실패: {str(e)}")
         
         # Fork된 시나리오의 경우 대화 저장
         if is_forked and forked_scenario_id and user_id:
@@ -557,6 +640,139 @@ You must adapt your responses to this new setting while maintaining your charact
             "is_forked": is_forked,
             "is_saved": is_forked  # Fork된 시나리오는 저장됨
         }
+    
+    def stream_chat_with_scenario(
+        self,
+        scenario_id: str,
+        user_message: str,
+        conversation_history: Optional[List[Dict]] = None,
+        output_language: str = "ko",
+        is_forked: bool = False,
+        forked_scenario_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+        user_id: Optional[str] = None
+    ):
+        """
+        시나리오 기반 스트리밍 대화
+        
+        Args:
+            scenario_id: 시나리오 ID (Fork된 경우 원본 시나리오 ID)
+            user_message: 사용자 메시지
+            conversation_history: 대화 기록
+            output_language: 출력 언어
+            is_forked: Fork된 시나리오인지 여부
+            forked_scenario_id: Fork된 시나리오 ID (Fork된 경우)
+            conversation_id: 기존 대화 ID
+            user_id: 사용자 ID (대화 저장용)
+        
+        Yields:
+            응답 청크
+        """
+        # 시나리오 로드
+        original_scenario = None
+        if is_forked and forked_scenario_id:
+            # Fork된 시나리오 로드
+            file_path = self.project_root / "data" / "scenarios" / "forked" / user_id / f"{forked_scenario_id}.json"
+            if not file_path.exists():
+                yield {
+                    'error': f"Fork된 시나리오를 찾을 수 없습니다: {forked_scenario_id}"
+                }
+                return
+            
+            with open(file_path, 'r', encoding='utf-8') as f:
+                forked_scenario = json.load(f)
+            
+            # 원본 시나리오 로드 (first_conversation 참조용)
+            original_scenario_id = forked_scenario.get("original_scenario_id")
+            original_scenario = self.scenario_service.get_scenario(original_scenario_id)
+            if not original_scenario:
+                yield {
+                    'error': f"원본 시나리오를 찾을 수 없습니다: {original_scenario_id}"
+                }
+                return
+            
+            scenario = {
+                "scenario_id": original_scenario_id,
+                "character_name": forked_scenario["character_name"],
+                "book_title": forked_scenario["book_title"],
+                "character_property_changes": forked_scenario["character_property_changes"],
+                "event_alterations": forked_scenario["event_alterations"],
+                "setting_modifications": forked_scenario["setting_modifications"]
+            }
+        else:
+            scenario = self.scenario_service.get_scenario(scenario_id)
+            if not scenario:
+                yield {
+                    'error': f"시나리오를 찾을 수 없습니다: {scenario_id}"
+                }
+                return
+            original_scenario = scenario
+        
+        # 캐릭터 정보 로드
+        character = CharacterDataLoader.get_character_info(
+            self.characters,
+            scenario["character_name"],
+            scenario["book_title"]
+        )
+        if not character:
+            yield {
+                'error': f"캐릭터를 찾을 수 없습니다: {scenario['character_name']}"
+            }
+            return
+        
+        # 시나리오 적용 프롬프트 생성 (원본 first_conversation 참조 포함)
+        system_instruction = self.create_scenario_prompt(
+            character,
+            scenario,
+            output_language,
+            is_forked=is_forked,
+            original_first_conversation=original_scenario.get("first_conversation") if original_scenario else None
+        )
+        
+        # 대화 기록 준비
+        contents = []
+        if conversation_history:
+            for msg in conversation_history[-5:]:  # 최근 5개만
+                # 빈 딕셔너리나 잘못된 형식 필터링
+                if isinstance(msg, dict) and msg.get('role') and msg.get('parts'):
+                    contents.append(msg)
+        
+        # 사용자 메시지 추가
+        contents.append({
+            "role": "user",
+            "parts": [{"text": user_message}]
+        })
+        
+        # BaseChatService의 공통 스트리밍 API 호출 로직 사용
+        try:
+            response_stream = self._call_gemini_api(
+                contents=contents,
+                system_instruction=system_instruction,
+                model="gemini-2.5-flash",
+                temperature=0.8,
+                top_p=0.95,
+                max_output_tokens=4096,
+                stream=True
+            )
+            
+            # 청크 단위로 응답 전송
+            for chunk in response_stream:
+                if hasattr(chunk, 'text'):
+                    yield {
+                        'chunk': chunk.text,
+                        'character_name': scenario["character_name"],
+                        'scenario_id': scenario_id if not is_forked else forked_scenario_id
+                    }
+        except ValueError as e:
+            yield {
+                'error': f"대화 생성 실패: {str(e)}",
+                'character_name': scenario["character_name"]
+            }
+        except Exception as e:
+            yield {
+                'error': f"스트리밍 실패: {str(e)}",
+                'character_name': scenario["character_name"]
+            }
     
     def _cleanup_expired_conversations(self):
         """

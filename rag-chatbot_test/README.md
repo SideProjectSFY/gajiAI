@@ -72,14 +72,53 @@ py scripts/setup_file_search.py
 
 **소요 시간**: 책 1개당 약 30초~1분
 
-### 4. 테스트
+### 4. 캐릭터 페르소나 생성 (선택)
+
+```bash
+# File Search를 사용하여 원본 텍스트와 인물 관계도를 분석하여
+# 각 책의 id 1, 2 캐릭터의 페르소나와 말투를 자동 생성
+py scripts/generate_character_personas.py
+```
+
+**기능**:
+- `origin_txt/`의 원본 텍스트를 File Search로 분석
+- `char_graph/`의 인물 관계도에서 id 1, 2 캐릭터 추출
+- 각 캐릭터의 페르소나와 말투를 **영어/한국어** 이중 생성
+- `data/characters/` 폴더에 책별로 JSON 파일 저장
+
+**출력 형식**:
+```json
+{
+  "book_title": "The Great Gatsby",
+  "author": "F. Scott Fitzgerald",
+  "characters": [
+    {
+      "character_name": "Nick Carraway",
+      "persona": "...",           // 영어 (기존 호환성)
+      "persona_en": "...",        // 영어
+      "persona_ko": "...",        // 한국어
+      "speaking_style": "...",    // 영어 (기존 호환성)
+      "speaking_style_en": "...", // 영어
+      "speaking_style_ko": "..."  // 한국어
+    }
+  ]
+}
+```
+
+**소요 시간**: 책 1개당 약 4-6분 (캐릭터 2명 × 4개 생성)
+
+**주의사항**:
+- File Search Store가 설정되어 있어야 합니다
+- API 키 할당량을 고려하여 실행하세요
+
+### 5. 테스트
 
 ```bash
 # 터미널에서 캐릭터와 대화
 py test_character_chat.py
 ```
 
-### 5. API 서버 실행
+### 6. API 서버 실행
 
 ```bash
 # FastAPI 서버 시작
@@ -355,6 +394,8 @@ rag-chatbot_test/
 │   │   ├── scenario.py                   # What If 시나리오 API
 │   │   └── chat.py                      # 레거시 RAG API
 │   └── services/
+│       ├── base_chat_service.py         # 기본 대화 서비스 (공통 API 호출 로직)
+│       ├── character_data_loader.py     # 캐릭터 데이터 로더 (유틸리티)
 │       ├── character_chat_service.py    # 캐릭터 대화 서비스
 │       ├── scenario_management_service.py # 시나리오 관리 서비스
 │       ├── scenario_chat_service.py     # 시나리오 대화 서비스
@@ -364,6 +405,7 @@ rag-chatbot_test/
 ├── scripts/
 │   ├── collect_data.py                  # 책 검색 및 저장
 │   ├── setup_file_search.py             # File Search Store 설정
+│   ├── generate_character_personas.py   # 캐릭터 페르소나 자동 생성
 │   ├── download_dataset.py              # 데이터셋 다운로드
 │   ├── preprocess_text.py               # 텍스트 전처리 (레거시)
 │   └── import_to_chromadb.py            # ChromaDB 임포트 (레거시)
@@ -374,7 +416,9 @@ rag-chatbot_test/
 │   ├── origin_txt/                      # 원본 책 텍스트
 │   ├── origin_dataset/                  # 다운로드된 데이터셋
 │   ├── cache/                           # 메타데이터 캐시
-│   ├── characters.json                  # 캐릭터 정보
+│   ├── characters/                      # 책별 캐릭터 페르소나 (자동 생성)
+│   ├── char_graph/                      # 인물 관계도 JSON 파일
+│   ├── characters.json                  # 캐릭터 정보 (레거시)
 │   └── file_search_store_info.json      # File Search Store 정보
 ├── convert_to_csv.py                    # 데이터셋 → CSV 변환
 ├── test_character_chat.py               # 터미널 테스트
@@ -423,7 +467,11 @@ Gemini로 답변 생성
     ↓
 캐릭터 선택
     ↓
+CharacterDataLoader → 캐릭터 정보 로드
+    ↓
 페르소나 프롬프트 생성
+    ↓
+BaseChatService → 공통 API 호출 로직
     ↓
 Gemini File Search
   ├─ 자동 임베딩
@@ -436,6 +484,37 @@ Gemini File Search
     ↓
 인용 정보 포함
 ```
+
+### 서비스 계층 구조 (v2.1 - 최적화 완료)
+```
+BaseChatService (공통 로직)
+  ├─ API 키 관리
+  ├─ Store 정보 관리
+  ├─ API 호출 (재시도 로직)
+  └─ _call_gemini_api(), _extract_response()
+
+CharacterDataLoader (유틸리티)
+  ├─ load_characters() - 캐릭터 정보 로드
+  ├─ get_character_info() - 캐릭터 정보 조회
+  └─ get_available_characters() - 캐릭터 목록 반환
+
+CharacterChatService (BaseChatService 상속)
+  ├─ CharacterDataLoader 사용
+  ├─ 기본 페르소나 프롬프트 생성
+  └─ chat(), stream_chat()
+
+ScenarioChatService (BaseChatService 상속)
+  ├─ CharacterDataLoader 직접 사용
+  ├─ 시나리오 프롬프트 생성
+  ├─ 대화 저장/관리
+  └─ first_conversation(), chat_with_scenario()
+```
+
+**최적화 효과:**
+- ✅ API 호출 로직 중복 제거
+- ✅ 불필요한 의존성 제거 (CharacterChatService 인스턴스 불필요)
+- ✅ 메모리 효율 향상 (캐릭터 데이터만 로드)
+- ✅ 코드 재사용성 향상
 
 ## 🎯 주요 기능
 
@@ -466,6 +545,12 @@ Gemini File Search
 - **첫 대화**: 시나리오에 맞춘 캐릭터와의 대화 (최대 5턴)
 - **시나리오 Fork**: 다른 사용자의 시나리오를 기반으로 새로운 대화 시작
 - **공개 시나리오**: 커뮤니티와 시나리오 공유 및 탐색
+
+### 6. 서비스 아키텍처 최적화
+- **BaseChatService**: 공통 API 호출 로직을 상속으로 재사용
+- **CharacterDataLoader**: 캐릭터 정보 로드 로직을 유틸리티로 분리
+- **의존성 최소화**: 각 서비스가 필요한 기능만 사용
+- **코드 중복 제거**: 유지보수 용이성 향상
 
 ## 📚 추가 문서
 
@@ -654,13 +739,79 @@ py scripts/setup_file_search.py
 - 자동 로테이션 활성화됨
 
 ### 캐릭터를 찾을 수 없습니다
-- `data/characters.json` 파일 확인
+- `data/characters/` 폴더의 JSON 파일 확인 (새 구조)
+- 또는 `data/characters.json` 파일 확인 (레거시)
 - 캐릭터 이름 정확히 입력
+
+## 🎭 캐릭터 페르소나 자동 생성
+
+### 개요
+
+`scripts/generate_character_personas.py` 스크립트는 File Search를 활용하여 원본 텍스트와 인물 관계도를 분석하고, 각 책의 주요 캐릭터(id 1, 2)의 페르소나와 말투를 자동으로 생성합니다.
+
+### 특징
+
+- **File Search 기반 분석**: 원본 텍스트에서 실제 대사와 행동 패턴 추출
+- **인물 관계도 활용**: char_graph의 관계 정보를 반영한 페르소나 생성
+- **이중 언어 생성**: 영어와 한국어로 각각 생성하여 번역 손실 방지
+- **책별 저장**: `data/characters/` 폴더에 책별로 JSON 파일 저장
+
+### 사용 방법
+
+```bash
+# 모든 책의 캐릭터 페르소나 생성
+py scripts/generate_character_personas.py
+```
+
+### 생성 프로세스
+
+1. **데이터 수집**
+   - `saved_books_info.json`에서 책 목록 로드
+   - 각 책의 `char_graph` JSON에서 id 1, 2 캐릭터 추출
+
+2. **원본 텍스트 분석** (File Search 사용)
+   - 캐릭터의 주요 대사 샘플 추출
+   - 주요 사건/장면 요약
+   - 행동 패턴 및 결정 분석
+   - 다른 인물의 평가 수집
+
+3. **페르소나 생성**
+   - 영어 페르소나 생성
+   - 한국어 페르소나 생성
+
+4. **말투 생성**
+   - 영어 말투 생성
+   - 한국어 말투 생성 (한국어 특유의 표현, 어미, 존댓말/반말 수준 등 구체적으로 명시)
+
+5. **결과 저장**
+   - `data/characters/[책제목].json` 형식으로 저장
+
+### 출력 파일 구조
+
+```
+data/characters/
+├── Frankenstein; Or, The Modern Prometheus.json
+├── Pride and Prejudice.json
+├── The Great Gatsby.json
+├── Romeo and Juliet.json
+├── The Adventures of Tom Sawyer, Complete.json
+└── The Adventures of Sherlock Holmes.json
+```
+
+### 한국어 말투 생성의 중요성
+
+한국어로 번역할 때 말투의 본질을 유지하기 위해, 원본 텍스트의 대사 패턴을 분석하여 한국어로 말할 때의 말투를 직접 생성합니다. 이를 통해:
+
+- 번역 과정에서 손실되는 뉘앙스 방지
+- 한국어 특유의 표현, 어미, 존댓말/반말 수준을 구체적으로 명시
+- 캐릭터의 성격과 일치하는 자연스러운 한국어 말투 구현
 
 ## 📈 향후 계획
 
+- [x] 캐릭터 페르소나 자동 생성 (File Search 기반)
+- [x] 서비스 아키텍처 최적화 (BaseChatService, CharacterDataLoader)
 - [ ] 더 많은 캐릭터 추가
-- [ ] 다국어 지원
+- [x] 다국어 지원 (영어/한국어)
 - [ ] 음성 대화 기능
 - [ ] 감정 분석 및 반영
 - [ ] 프론트엔드 웹 인터페이스

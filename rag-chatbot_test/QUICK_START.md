@@ -6,8 +6,9 @@
 다음 파일들이 존재하는지 확인하세요:
 - ✅ `.env` 파일 (API 키 설정)
 - ✅ `data/file_search_store_info.json` (File Search Store 정보)
-- ✅ `data/characters.json` (캐릭터 정보)
+- ✅ `data/characters.json` 또는 `data/characters/` 폴더 (캐릭터 정보)
 - ✅ `data/origin_txt/` 폴더에 책 텍스트 파일들
+- ✅ `data/char_graph/` 폴더에 인물 관계도 JSON 파일들
 
 ### 2. 패키지 설치 확인
 ```bash
@@ -27,26 +28,48 @@ cd C:\SSAFY\gaji_PJT\gajiAI\rag-chatbot_test
 
 `.env` 파일 내용 예시:
 ```env
-GEMINI_API_KEYS=YOUR-GEMINI-API-KEYS
+GEMINI_API_KEYS=YOUR-GEMINI-API-KEY1,YOUR-GEMINI-API-KEY2,YOUR-GEMINI-API-KEY3
 ```
 
-### 2단계: 서버 실행
+### 2단계: 캐릭터 페르소나 생성 (선택, 처음 실행 시)
+
+캐릭터 페르소나를 자동으로 생성하려면:
+
+```bash
+# File Search를 사용하여 원본 텍스트와 인물 관계도를 분석하여
+# 각 책의 id 1, 2 캐릭터의 페르소나와 말투를 자동 생성
+py scripts/generate_character_personas.py
+```
+
+**기능**:
+- `origin_txt/`의 원본 텍스트를 File Search로 분석
+- `char_graph/`의 인물 관계도에서 id 1, 2 캐릭터 추출
+- 각 캐릭터의 페르소나와 말투를 **영어/한국어** 이중 생성
+- `data/characters/` 폴더에 책별로 JSON 파일 저장
+
+**소요 시간**: 책 1개당 약 4-6분 (캐릭터 2명 × 4개 생성)
+
+**주의사항**:
+- File Search Store가 설정되어 있어야 합니다 (`py scripts/setup_file_search.py` 실행 필요)
+- API 키 할당량을 고려하여 실행하세요
+
+### 3단계: 서버 실행
 
 ```bash
 # 프로젝트 디렉토리로 이동
 cd C:\SSAFY\gaji_PJT\gajiAI\rag-chatbot_test
 
 # 서버 시작
-py -m uvicorn app.main:app --reload
+py -m uvicorn app.main:app
 ```
 
 또는:
 
 ```bash
-python -m uvicorn app.main:app --reload
+python -m uvicorn app.main:app
 ```
 
-### 3단계: 서비스 확인
+### 4단계: 서비스 확인
 
 서버가 정상적으로 시작되면 다음 메시지가 표시됩니다:
 ```
@@ -55,7 +78,7 @@ INFO:     Application startup complete.
 [OK] API 키 #1 사용 중
 ```
 
-### 4단계: API 테스트
+### 5단계: API 테스트
 
 #### 브라우저에서 확인
 - API 문서: http://localhost:8000/docs
@@ -134,6 +157,11 @@ Content-Type: application/json
 
 3. **File Search Store 오류**: `data/file_search_store_info.json` 파일이 있는지 확인하세요.
    - 없다면: `py scripts/setup_file_search.py --mode main` 실행
+
+4. **캐릭터 페르소나 생성 오류**: 
+   - File Search Store가 설정되어 있는지 확인
+   - `data/char_graph/` 폴더에 인물 관계도 JSON 파일이 있는지 확인
+   - `data/origin_txt/saved_books_info.json` 파일이 있는지 확인
 
 ### API 할당량 초과 시
 - 자동으로 다음 API 키로 전환됩니다.

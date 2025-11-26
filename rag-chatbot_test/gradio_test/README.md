@@ -31,10 +31,6 @@ pip install -r gradio_test/requirements.txt
 # 여러 API 키 (쉼표로 구분)
 GEMINI_API_KEYS=key1,key2,key3
 
-# 또는 단일 키
-GEMINI_API_KEY=your_api_key_here
-```
-
 ## 실행 방법
 
 ```bash
