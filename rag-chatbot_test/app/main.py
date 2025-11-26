@@ -15,6 +15,8 @@ from app.services.vectordb_client import get_vectordb_client
 from app.services.gemini_client import GeminiClient
 from app.celery_app import celery_app
 from app.middleware import CorrelationIdMiddleware
+from app.middleware.rate_limiter import RateLimiterMiddleware
+import redis.asyncio as redis
 
 # Structlog 설정 (with correlation ID context support)
 structlog.configure(
@@ -46,6 +48,18 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# Initialize Redis for rate limiting (SEC-001 fix)
+redis_client = None
+if settings.redis_url:
+    try:
+        redis_client = redis.Redis.from_url(settings.redis_url)
+        logger.info("redis_initialized_for_rate_limiting")
+    except Exception as e:
+        logger.warning("redis_init_failed_rate_limiting_disabled", error=str(e))
+
+# Rate Limiting middleware (SEC-001: must be added before CORS)
+app.add_middleware(RateLimiterMiddleware, redis_client=redis_client)
+
 # Correlation ID middleware (must be added first for proper ordering)
 app.add_middleware(CorrelationIdMiddleware)
 
@@ -60,12 +74,16 @@ app.add_middleware(
 
 logger.info("fastapi_initialized", cors_allowed=settings.spring_boot_url)
 
-# 라우터 등록 - Character Chat & Scenario 기능
-from app.routers import character_chat, scenario, chat
+# 라우터 등록
+from app.routers import chat, character_chat, scenario
+from app.api import prompt, context, scenario_testing  # Story 2.1, 2.2 & 2.4: AI Layer
 app.include_router(character_chat.router)
 app.include_router(scenario.router)
 app.include_router(chat.router)
 app.include_router(validation.router)
+app.include_router(prompt.router)  # Story 2.1: Prompt Adaptation
+app.include_router(context.router)  # Story 2.2: Context Window Manager
+app.include_router(scenario_testing.router)  # Story 2.4: Scenario Quality Testing
 
 
 @app.on_event("startup")
@@ -106,6 +124,17 @@ async def root():
             "chat": "/api/conversations/{id}/messages",
             "chat_stream": "/api/conversations/{id}/messages/stream",
             "search": "/api/search/passages",
+            # AI Prompt Adaptation (Story 2.1)
+            "adapt_prompt": "/api/ai/adapt-prompt",
+            "circuit_breaker_status": "/api/ai/circuit-breaker/status",
+            # AI Context Management (Story 2.2)
+            "build_context": "/api/ai/build-context",
+            "context_metrics": "/api/ai/context-metrics",
+            # AI Scenario Testing (Story 2.4)
+            "test_suite": "/api/ai/test-suite",
+            "test_scenario": "/api/ai/test-scenario/{test_id}",
+            "test_categories": "/api/ai/test-categories",
+            "test_list": "/api/ai/test-list",
             # Health & Docs
             "health": "/health",
             "docs": "/docs"
