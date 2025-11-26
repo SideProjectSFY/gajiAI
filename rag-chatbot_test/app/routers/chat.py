@@ -19,7 +19,6 @@ router = APIRouter(prefix="/api/ai", tags=["chat"])
 def get_rag_service() -> RAGService:
     """RAG 서비스 인스턴스 생성"""
     return RAGService(
-        chroma_path=os.getenv("CHROMA_PATH", "./chroma_data"),
         collection_name=os.getenv("CHROMA_COLLECTION", "novel_passages"),
         gemini_api_key=os.getenv("GEMINI_API_KEY")
     )
