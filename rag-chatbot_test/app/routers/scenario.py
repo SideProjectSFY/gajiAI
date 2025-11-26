@@ -349,6 +349,9 @@ async def fork_scenario(
             "is_saved": False,  # 임시 저장소에 저장됨, 최종 컨펌 필요
             "is_temporary": True
         }
+    except HTTPException:
+        # Re-raise HTTPException (e.g., 404 from get_scenario)
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
