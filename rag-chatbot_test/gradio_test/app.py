@@ -5,38 +5,60 @@ Gradio UI for What If Scenario Chat
 What If 시나리오를 생성하고 시나리오대로 캐릭터와 대화하는 인터페이스
 """
 
-import os
 import sys
 import json
+import logging
+from datetime import datetime
 import gradio as gr
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 # 프로젝트 루트를 Python 경로에 추가
 current_dir = Path(__file__).parent
 project_root = current_dir.parent
 sys.path.insert(0, str(project_root))
 
+# 로그 디렉토리 생성
+log_dir = project_root / "logs"
+log_dir.mkdir(exist_ok=True)
+
+# 로그 파일 설정 (날짜별로 파일 생성)
+log_filename = log_dir / f"gradio_app_{datetime.now().strftime('%Y%m%d')}.log"
+
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_filename, encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)  # 콘솔에도 출력
+    ]
+)
+
+logger = logging.getLogger(__name__)
+logger.info("=" * 80)
+logger.info("Gradio App 시작")
+logger.info(f"로그 파일: {log_filename}")
+logger.info("=" * 80)
+
 # 서비스 직접 import
 from app.services.character_chat_service import CharacterChatService
 from app.services.scenario_management_service import ScenarioManagementService
 from app.services.scenario_chat_service import ScenarioChatService
 from app.services.api_key_manager import get_api_key_manager
+from app.services.character_data_loader import CharacterDataLoader
 
 # 전역 변수 (서비스 인스턴스는 공유 가능)
 character_service = None
 scenario_service = None
 scenario_chat_service = None
-available_characters = []
-
-# 세션별 상태는 gr.State로 관리 (전역 변수 제거)
-# current_scenario_id, current_conversation_id, current_turn_count는 gr.State로 이동
 
 
 def initialize_service():
     """서비스 초기화"""
-    global character_service, scenario_service, scenario_chat_service, available_characters
+    global character_service, scenario_service, scenario_chat_service
     
+    logger.info("서비스 초기화 시작...")
     try:
         # API 키 매니저 초기화
         api_key_manager = get_api_key_manager()
@@ -47,11 +69,13 @@ def initialize_service():
         scenario_service = ScenarioManagementService()
         scenario_chat_service = ScenarioChatService()
         
-        # 캐릭터 목록 가져오기
+        # 캐릭터 목록 가져오기 (로깅용)
         available_characters = character_service.get_available_characters()
         
+        logger.info(f"서비스 초기화 완료! (캐릭터 {len(available_characters)}개)")
         return True, f"✅ 서비스 초기화 완료! ({len(available_characters)}명의 캐릭터 로드됨)"
     except Exception as e:
+        logger.error(f"서비스 초기화 실패: {str(e)}", exc_info=True)
         return False, f"❌ 서비스 초기화 실패: {str(e)}"
 
 
@@ -68,8 +92,7 @@ def load_books_from_characters_folder() -> List[Dict]:
                     book_data = json.load(f)
                     books.append({
                         'book_title': book_data.get('book_title', ''),
-                        'author': book_data.get('author', ''),
-                        'filepath': str(json_file)
+                        'author': book_data.get('author', '')
                     })
             except Exception:
                 continue
@@ -115,8 +138,8 @@ def get_characters_by_book(book_display: str) -> List[str]:
     return []
 
 
-def get_character_info(book_display: str, character_name: str, language: str = "ko"):
-    """캐릭터 정보 가져오기"""
+def get_character_info(book_display: str, character_name: str):
+    """캐릭터 정보 가져오기 (캐릭터 설명만 반환)"""
     if not character_service or not character_name or not book_display:
         return ""
     
@@ -126,25 +149,12 @@ def get_character_info(book_display: str, character_name: str, language: str = "
     try:
         character = character_service.get_character_info(character_name, book_title)
         if character:
-            # 언어에 맞는 라벨 선택
-            if language == "ko":
-                persona_label = "캐릭터 설명"
-                persona_text = character.get('persona_ko') or character.get('persona', '')
-            else:
-                persona_label = "Character Description"
-                persona_text = character.get('persona_en') or character.get('persona', '')
-            
-            info = f"""**캐릭터 / Character**: {character['character_name']}
-**책 / Book**: {character['book_title']}
-**저자 / Author**: {character['author']}
-
-**{persona_label}**:
-{persona_text}
-"""
-            return info
-        return "캐릭터를 찾을 수 없습니다." if language == "ko" else "Character not found."
+            # 한국어 캐릭터 설명만 반환
+            persona_text = character.get('persona_ko') or character.get('persona', '')
+            return persona_text
+        return "캐릭터를 찾을 수 없습니다."
     except Exception as e:
-        return f"오류: {str(e)}" if language == "ko" else f"Error: {str(e)}"
+        return f"오류: {str(e)}"
 
 
 def create_scenario(
@@ -155,14 +165,25 @@ def create_scenario(
     event_alteration_desc,
     setting_modification_desc,
     is_public,
-    session_state  # gr.State로 세션별 상태 전달
+    session_state
 ):
     """시나리오 생성"""
-    if not scenario_service:
-        return "❌ 서비스를 먼저 초기화해주세요.", "", "시나리오를 먼저 생성해주세요.", [], session_state
+    logger.info(f"시나리오 생성 요청: character={character_name}, book={book_display}, scenario_name={scenario_name}")
     
-    if not scenario_name or not book_display or not character_name:
-        return "❌ 시나리오 이름, 책, 주인공을 모두 선택해주세요.", "", "시나리오를 먼저 생성해주세요.", [], session_state
+    # 즉시 로딩 메시지 표시
+    loading_msg = "⏳ 시나리오 생성 중... 잠시만 기다려주세요."
+    
+    if not scenario_service:
+        logger.warning("시나리오 서비스가 초기화되지 않음")
+        yield "❌ 서비스를 먼저 초기화해주세요.", "", "시나리오를 먼저 생성해주세요.", [], session_state, gr.update()
+        return
+    
+    if not book_display or not character_name:
+        yield "❌ 책과 주인공을 선택해주세요.", "", "시나리오를 먼저 생성해주세요.", [], session_state, gr.update()
+        return
+    
+    # 로딩 메시지 즉시 표시
+    yield loading_msg, "", "시나리오 생성 중...", [], session_state, gr.update()
     
     try:
         # 책 제목 추출
@@ -171,12 +192,62 @@ def create_scenario(
         # 캐릭터 정보 가져오기
         character = character_service.get_character_info(character_name, book_title)
         if not character:
-            return f"❌ 캐릭터를 찾을 수 없습니다: {character_name} (책: {book_title})", "", "시나리오를 먼저 생성해주세요.", [], session_state
+            yield f"❌ 캐릭터를 찾을 수 없습니다: {character_name} (책: {book_title})", "", "시나리오를 먼저 생성해주세요.", [], session_state, gr.update()
+            return
         
         # 텍스트 입력 여부로 자동 활성화 판단
-        character_property_enabled = bool(character_property_desc and character_property_desc.strip())
-        event_alteration_enabled = bool(event_alteration_desc and event_alteration_desc.strip())
-        setting_modification_enabled = bool(setting_modification_desc and setting_modification_desc.strip())
+        character_property_enabled = bool(character_property_desc and character_property_desc.strip() and not character_property_desc.strip().startswith("예:"))
+        event_alteration_enabled = bool(event_alteration_desc and event_alteration_desc.strip() and not event_alteration_desc.strip().startswith("예:"))
+        setting_modification_enabled = bool(setting_modification_desc and setting_modification_desc.strip() and not setting_modification_desc.strip().startswith("예:"))
+        
+        # 변경사항이 하나도 없으면 기본 캐릭터 대화 모드
+        has_any_changes = character_property_enabled or event_alteration_enabled or setting_modification_enabled
+        
+        # What If 시나리오 생성 시에만 시나리오 제목 필수
+        if has_any_changes and not scenario_name:
+            yield "❌ What If 시나리오를 생성하려면 시나리오 제목을 입력해주세요.", "", "시나리오를 먼저 생성해주세요.", [], session_state, gr.update()
+            return
+        
+        if not has_any_changes:
+            # 기본 캐릭터 대화 모드 설정
+            session_state['is_basic_character_chat'] = True
+            session_state['book_title'] = book_title
+            session_state['character_name'] = character_name
+            session_state['scenario_id'] = None
+            session_state['conversation_id'] = None
+            session_state['turn_count'] = 0
+            
+            # 다른 주인공 정보 미리 가져오기
+            characters = CharacterDataLoader.load_characters()
+            other_main_character = CharacterDataLoader.get_other_main_character(
+                characters, character_name, book_title
+            )
+            session_state['other_main_character_name'] = other_main_character.get('character_name') if other_main_character else None
+            
+            scenario_info = f"""
+**원본 캐릭터 대화 모드**
+
+**캐릭터**: {character_name}
+**책**: {book_title}
+
+변경사항이 없어 원본 캐릭터와 대화합니다.
+
+👉 **시나리오 대화 탭을 눌러 대화를 시작하세요!**
+"""
+            # 다른 주인공 이름으로 라디오 버튼 업데이트
+            other_name = session_state.get('other_main_character_name', '')
+            if other_name:
+                radio_choices = [
+                    ("제3의 인물 (처음 보는 낯선 사람)", "stranger"),
+                    (f"{other_name} (책 속 인물)", "other_main_character")
+                ]
+            else:
+                radio_choices = [
+                    ("제3의 인물 (처음 보는 낯선 사람)", "stranger")
+                ]
+            
+            yield scenario_info, "", "원본 캐릭터 대화 모드", [], session_state, gr.update(choices=radio_choices, value="stranger", interactive=True)
+            return
         
         # 시나리오 설명 구성
         descriptions = {
@@ -205,9 +276,17 @@ def create_scenario(
         )
         
         # 세션별 상태 업데이트
+        session_state['is_basic_character_chat'] = False
         session_state['scenario_id'] = result['scenario_id']
         session_state['conversation_id'] = None
         session_state['turn_count'] = 0
+        
+        # 다른 주인공 정보 미리 가져오기
+        characters = CharacterDataLoader.load_characters()
+        other_main_character = CharacterDataLoader.get_other_main_character(
+            characters, character_name, book_title
+        )
+        session_state['other_main_character_name'] = other_main_character.get('character_name') if other_main_character else None
         
         scenario_info = f"""
 **시나리오 생성 완료!**
@@ -217,34 +296,181 @@ def create_scenario(
 **책**: {book_title}
 **시나리오 ID**: {session_state['scenario_id']}
 
-이제 첫 대화를 시작하세요!
+👉 **시나리오 대화 탭을 눌러 대화를 시작하세요!**
 """
         
-        return scenario_info, session_state['scenario_id'], session_state['scenario_id'], [], session_state
+        logger.info(f"시나리오 생성 완료: scenario_id={session_state['scenario_id']}")
+        
+        # 다른 주인공 이름으로 라디오 버튼 업데이트
+        other_name = session_state.get('other_main_character_name', '')
+        if other_name:
+            radio_choices = [
+                ("제3의 인물 (처음 보는 낯선 사람)", "stranger"),
+                (f"{other_name} (책 속 인물)", "other_main_character")
+            ]
+        else:
+            radio_choices = [
+                ("제3의 인물 (처음 보는 낯선 사람)", "stranger")
+            ]
+        
+        yield scenario_info, session_state['scenario_id'], session_state['scenario_id'], [], session_state, gr.update(choices=radio_choices, value="stranger", interactive=True)
     
     except Exception as e:
-        return f"❌ 시나리오 생성 실패: {str(e)}", "", "시나리오를 먼저 생성해주세요.", [], session_state
+        logger.error(f"시나리오 생성 실패: {str(e)}", exc_info=True)
+        yield f"❌ 시나리오 생성 실패: {str(e)}", "", "시나리오를 먼저 생성해주세요.", [], session_state, gr.update()
 
 
 # 대화 기록 저장 (세션별)
 conversation_histories = {}
 
-def start_first_conversation(message, scenario_id, history, output_language, session_state):
+def start_first_conversation(message, scenario_id, history, session_state):
     """첫 대화 시작"""
+    output_language = "ko"  # 한국어로 고정
+    
+    # 기본 캐릭터 대화 모드인지 확인
+    if session_state.get('is_basic_character_chat'):
+        # 라디오 버튼 업데이트 준비 (공통)
+        other_name = session_state.get('other_main_character_name', '')
+        if other_name:
+            radio_choices = [
+                ("제3의 인물 (처음 보는 낯선 사람)", "stranger"),
+                (f"{other_name} (책 속 인물)", "other_main_character")
+            ]
+        else:
+            radio_choices = [
+                ("제3의 인물 (처음 보는 낯선 사람)", "stranger")
+            ]
+        current_partner_type = session_state.get('conversation_partner_type', 'stranger')
+        is_interactive = not bool(session_state.get('conversation_id'))
+        
+        if not character_service:
+            error_msg = "❌ 서비스를 먼저 초기화해주세요."
+            return history, error_msg, "", gr.update(visible=False), gr.update(visible=False), "", session_state, gr.update(choices=radio_choices, value=current_partner_type, interactive=is_interactive)
+        
+        if not message.strip():
+            return history, "", "", gr.update(visible=False), gr.update(visible=False), "", session_state, gr.update(choices=radio_choices, value=current_partner_type, interactive=is_interactive)
+        
+        try:
+            # 기본 캐릭터 대화
+            book_title = session_state.get('book_title')
+            character_name = session_state.get('character_name')
+            conversation_partner_type = session_state.get('conversation_partner_type', 'stranger')
+            
+            # 다른 주인공 정보 가져오기 (필요한 경우)
+            other_main_character = None
+            if conversation_partner_type == "other_main_character":
+                characters = CharacterDataLoader.load_characters()
+                other_main_character = CharacterDataLoader.get_other_main_character(
+                    characters, character_name, book_title
+                )
+                if not other_main_character:
+                    # 다른 주인공이 없으면 제3의 인물로 변경
+                    conversation_partner_type = 'stranger'
+            
+            # 대화 기록에 사용자 메시지 추가
+            history = history + [{"role": "user", "content": message}]
+            
+            # 기본 모드: 일반 응답
+            result = character_service.chat(
+                character_name=character_name,
+                book_title=book_title,
+                user_message=message,
+                output_language=output_language,
+                conversation_partner_type=conversation_partner_type,
+                other_main_character=other_main_character
+            )
+            
+            if 'error' in result:
+                error_msg = f"❌ {result['error']}"
+                # 에러 시에도 라디오 버튼 상태 유지
+                other_name = session_state.get('other_main_character_name', '')
+                if other_name:
+                    radio_choices = [
+                        ("제3의 인물 (처음 보는 낯선 사람)", "stranger"),
+                        (f"{other_name} (책 속 인물)", "other_main_character")
+                    ]
+                else:
+                    radio_choices = [
+                        ("제3의 인물 (처음 보는 낯선 사람)", "stranger")
+                    ]
+                current_partner_type = session_state.get('conversation_partner_type', 'stranger')
+                is_interactive = not bool(session_state.get('conversation_id'))
+                return history, error_msg, "", gr.update(visible=False), gr.update(visible=False), "", session_state, gr.update(choices=radio_choices, value=current_partner_type, interactive=is_interactive)
+            
+            # 대화 기록에 추가
+            history = history + [
+                {"role": "assistant", "content": result['response']}
+            ]
+            
+            # 대화가 시작되었으므로 라디오 버튼 비활성화
+            other_name = session_state.get('other_main_character_name', '')
+            if other_name:
+                radio_choices = [
+                    ("제3의 인물 (처음 보는 낯선 사람)", "stranger"),
+                    (f"{other_name} (책 속 인물)", "other_main_character")
+                ]
+            else:
+                radio_choices = [
+                    ("제3의 인물 (처음 보는 낯선 사람)", "stranger")
+                ]
+            current_partner_type = session_state.get('conversation_partner_type', 'stranger')
+            
+            status_msg = "원본 캐릭터와 대화 중"
+            return history, status_msg, "", gr.update(visible=False), gr.update(visible=False), "", session_state, gr.update(choices=radio_choices, value=current_partner_type, interactive=False)
+        
+        except Exception as e:
+            logger.error(f"대화 시작 실패: {str(e)}", exc_info=True)
+            error_msg = f"❌ 대화 시작 실패: {str(e)}"
+            # 에러 시에도 라디오 버튼 상태 유지
+            other_name = session_state.get('other_main_character_name', '')
+            if other_name:
+                radio_choices = [
+                    ("제3의 인물 (처음 보는 낯선 사람)", "stranger"),
+                    (f"{other_name} (책 속 인물)", "other_main_character")
+                ]
+            else:
+                radio_choices = [
+                    ("제3의 인물 (처음 보는 낯선 사람)", "stranger")
+                ]
+            current_partner_type = session_state.get('conversation_partner_type', 'stranger')
+            is_interactive = not bool(session_state.get('conversation_id'))
+            return history, error_msg, "", gr.update(visible=False), gr.update(visible=False), "", session_state, gr.update(choices=radio_choices, value=current_partner_type, interactive=is_interactive)
+    
+    # What If 시나리오 대화 모드
     if not scenario_chat_service or not scenario_id:
-        error_msg = "❌ 시나리오를 먼저 생성해주세요." if output_language == "ko" else "❌ Please create a scenario first."
-        return history, error_msg, "턴: 0/5" if output_language == "ko" else "Turn: 0/5", gr.update(visible=False), gr.update(visible=False), "", session_state
+        error_msg = "❌ 시나리오를 먼저 생성해주세요."
+        return history, error_msg, "턴: 0/5", gr.update(visible=False), gr.update(visible=False), "", session_state
     
     if not message.strip():
-        return history, "", "턴: 0/5" if output_language == "ko" else "Turn: 0/5", gr.update(visible=False), gr.update(visible=False), "", session_state
+        return history, "", "턴: 0/5", gr.update(visible=False), gr.update(visible=False), "", session_state
     
     try:
+        # 대화 상대 타입 및 다른 주인공 정보 가져오기
+        conversation_partner_type = session_state.get('conversation_partner_type', 'stranger')
+        other_main_character = None
+        
+        if conversation_partner_type == "other_main_character":
+            # 시나리오에서 캐릭터 정보 가져오기
+            scenario = scenario_chat_service.scenario_service.get_scenario(scenario_id)
+            if scenario:
+                characters = CharacterDataLoader.load_characters()
+                other_main_character = CharacterDataLoader.get_other_main_character(
+                    characters, 
+                    scenario.get('character_name', ''),
+                    scenario.get('book_title', '')
+                )
+                if not other_main_character:
+                    # 다른 주인공이 없으면 제3의 인물로 변경
+                    conversation_partner_type = 'stranger'
+        
         result = scenario_chat_service.first_conversation(
             scenario_id=scenario_id,
             initial_message=message,
             output_language=output_language,
             is_creator=True,
-            conversation_id=session_state.get('conversation_id')
+            conversation_id=session_state.get('conversation_id'),
+            conversation_partner_type=conversation_partner_type,
+            other_main_character=other_main_character
         )
         
         # 세션별 상태 업데이트
@@ -260,43 +486,186 @@ def start_first_conversation(message, scenario_id, history, output_language, ses
         # 세션별 기록 저장
         conversation_histories[result['conversation_id']] = history
         
-        if output_language == "ko":
-            status_msg = f"턴 {session_state['turn_count']}/{result['max_turns']}"
-            turn_info = f"턴: {session_state['turn_count']}/{result['max_turns']}"
+        status_msg = f"턴 {session_state['turn_count']}/{result['max_turns']}"
+        turn_info = f"턴: {session_state['turn_count']}/{result['max_turns']}"
+        
+        # 대화가 시작되었으므로 라디오 버튼 비활성화
+        other_name = session_state.get('other_main_character_name', '')
+        if other_name:
+            radio_choices = [
+                ("제3의 인물 (처음 보는 낯선 사람)", "stranger"),
+                (f"{other_name} (책 속 인물)", "other_main_character")
+            ]
         else:
-            status_msg = f"Turn {session_state['turn_count']}/{result['max_turns']}"
-            turn_info = f"Turn: {session_state['turn_count']}/{result['max_turns']}"
+            radio_choices = [
+                ("제3의 인물 (처음 보는 낯선 사람)", "stranger")
+            ]
+        current_partner_type = session_state.get('conversation_partner_type', 'stranger')
         
         # 5턴 완료 시 저장/취소 버튼 표시
         if session_state['turn_count'] >= result['max_turns']:
-            return history, status_msg, turn_info, gr.update(visible=True), gr.update(visible=True), "", session_state
+            return history, status_msg, turn_info, gr.update(visible=True), gr.update(visible=True), "", session_state, gr.update(choices=radio_choices, value=current_partner_type, interactive=False)
         else:
-            return history, status_msg, turn_info, gr.update(visible=False), gr.update(visible=False), "", session_state
+            return history, status_msg, turn_info, gr.update(visible=False), gr.update(visible=False), "", session_state, gr.update(choices=radio_choices, value=current_partner_type, interactive=False)
     
     except Exception as e:
-        error_msg = f"❌ 대화 시작 실패: {str(e)}" if output_language == "ko" else f"❌ Failed to start conversation: {str(e)}"
-        turn_msg = "턴: 0/5" if output_language == "ko" else "Turn: 0/5"
-        return history, error_msg, turn_msg, gr.update(visible=False), gr.update(visible=False), "", session_state
+        logger.error(f"What If 시나리오 대화 시작 실패: {str(e)}", exc_info=True)
+        error_msg = f"❌ 대화 시작 실패: {str(e)}"
+        turn_msg = "턴: 0/5"
+        # 에러 시에도 라디오 버튼 상태 유지
+        other_name = session_state.get('other_main_character_name', '')
+        if other_name:
+            radio_choices = [
+                ("제3의 인물 (처음 보는 낯선 사람)", "stranger"),
+                (f"{other_name} (책 속 인물)", "other_main_character")
+            ]
+        else:
+            radio_choices = [
+                ("제3의 인물 (처음 보는 낯선 사람)", "stranger")
+            ]
+        current_partner_type = session_state.get('conversation_partner_type', 'stranger')
+        is_interactive = not bool(session_state.get('conversation_id'))
+        return history, error_msg, turn_msg, gr.update(visible=False), gr.update(visible=False), "", session_state, gr.update(choices=radio_choices, value=current_partner_type, interactive=is_interactive)
 
 
-def continue_conversation(message, scenario_id, conversation_id, history, output_language, session_state):
+def continue_conversation(message, scenario_id, conversation_id, history, session_state):
     """대화 계속"""
+    output_language = "ko"  # 한국어로 고정
+    
+    # 기본 캐릭터 대화 모드인지 확인
+    if session_state.get('is_basic_character_chat'):
+        if not character_service:
+            error_msg = "❌ 서비스를 먼저 초기화해주세요."
+            return history, error_msg, "", gr.update(visible=False), gr.update(visible=False), "", session_state
+        
+        if not message.strip():
+            return history, "", "", gr.update(visible=False), gr.update(visible=False), "", session_state
+        
+        try:
+            # 기본 캐릭터 대화
+            book_title = session_state.get('book_title')
+            character_name = session_state.get('character_name')
+            
+            # 대화 기록에 사용자 메시지 추가
+            history = history + [{"role": "user", "content": message}]
+            
+            # 대화 상대 타입 및 다른 주인공 정보 가져오기
+            conversation_partner_type = session_state.get('conversation_partner_type', 'stranger')
+            other_main_character = None
+            
+            if conversation_partner_type == "other_main_character":
+                characters = CharacterDataLoader.load_characters()
+                other_main_character = CharacterDataLoader.get_other_main_character(
+                    characters, character_name, book_title
+                )
+                if not other_main_character:
+                    # 다른 주인공이 없으면 제3의 인물로 변경
+                    conversation_partner_type = 'stranger'
+            
+            # 기본 모드: 일반 응답
+            result = character_service.chat(
+                character_name=character_name,
+                book_title=book_title,
+                user_message=message,
+                conversation_history=history[:-1],  # 현재 메시지 제외
+                output_language=output_language,
+                conversation_partner_type=conversation_partner_type,
+                other_main_character=other_main_character
+            )
+            
+            if 'error' in result:
+                error_msg = f"❌ {result['error']}"
+                # 에러 시에도 라디오 버튼 상태 유지
+                other_name = session_state.get('other_main_character_name', '')
+                if other_name:
+                    radio_choices = [
+                        ("제3의 인물 (처음 보는 낯선 사람)", "stranger"),
+                        (f"{other_name} (책 속 인물)", "other_main_character")
+                    ]
+                else:
+                    radio_choices = [
+                        ("제3의 인물 (처음 보는 낯선 사람)", "stranger")
+                    ]
+                current_partner_type = session_state.get('conversation_partner_type', 'stranger')
+                is_interactive = not bool(session_state.get('conversation_id'))
+                return history, error_msg, "", gr.update(visible=False), gr.update(visible=False), "", session_state, gr.update(choices=radio_choices, value=current_partner_type, interactive=is_interactive)
+            
+            # 대화 기록에 추가
+            history = history + [
+                {"role": "assistant", "content": result['response']}
+            ]
+            
+            # 대화가 시작되었으므로 라디오 버튼 비활성화
+            other_name = session_state.get('other_main_character_name', '')
+            if other_name:
+                radio_choices = [
+                    ("제3의 인물 (처음 보는 낯선 사람)", "stranger"),
+                    (f"{other_name} (책 속 인물)", "other_main_character")
+                ]
+            else:
+                radio_choices = [
+                    ("제3의 인물 (처음 보는 낯선 사람)", "stranger")
+                ]
+            current_partner_type = session_state.get('conversation_partner_type', 'stranger')
+            
+            status_msg = "원본 캐릭터와 대화 중"
+            return history, status_msg, "", gr.update(visible=False), gr.update(visible=False), "", session_state, gr.update(choices=radio_choices, value=current_partner_type, interactive=False)
+        
+        except Exception as e:
+            logger.error(f"대화 계속 실패: {str(e)}", exc_info=True)
+            error_msg = f"❌ 대화 계속 실패: {str(e)}"
+            # 에러 시에도 라디오 버튼 상태 유지
+            other_name = session_state.get('other_main_character_name', '')
+            if other_name:
+                radio_choices = [
+                    ("제3의 인물 (처음 보는 낯선 사람)", "stranger"),
+                    (f"{other_name} (책 속 인물)", "other_main_character")
+                ]
+            else:
+                radio_choices = [
+                    ("제3의 인물 (처음 보는 낯선 사람)", "stranger")
+                ]
+            current_partner_type = session_state.get('conversation_partner_type', 'stranger')
+            is_interactive = not bool(session_state.get('conversation_id'))
+            return history, error_msg, "", gr.update(visible=False), gr.update(visible=False), "", session_state, gr.update(choices=radio_choices, value=current_partner_type, interactive=is_interactive)
+    
+    # What If 시나리오 대화 모드
     if not scenario_chat_service or not scenario_id:
-        error_msg = "❌ 시나리오를 먼저 생성해주세요." if output_language == "ko" else "❌ Please create a scenario first."
-        turn_msg = "턴: 0/5" if output_language == "ko" else "Turn: 0/5"
+        error_msg = "❌ 시나리오를 먼저 생성해주세요."
+        turn_msg = "턴: 0/5"
         return history, error_msg, turn_msg, gr.update(visible=False), gr.update(visible=False), "", session_state
     
     if not message.strip():
-        turn_msg = f"턴: {session_state.get('turn_count', 0)}/5" if output_language == "ko" else f"Turn: {session_state.get('turn_count', 0)}/5"
+        turn_msg = f"턴: {session_state.get('turn_count', 0)}/5"
         return history, "", turn_msg, gr.update(visible=False), gr.update(visible=False), "", session_state
     
     try:
+        # 대화 상대 타입 및 다른 주인공 정보 가져오기
+        conversation_partner_type = session_state.get('conversation_partner_type', 'stranger')
+        other_main_character = None
+        
+        if conversation_partner_type == "other_main_character":
+            # 시나리오에서 캐릭터 정보 가져오기
+            scenario = scenario_chat_service.scenario_service.get_scenario(scenario_id)
+            if scenario:
+                characters = CharacterDataLoader.load_characters()
+                other_main_character = CharacterDataLoader.get_other_main_character(
+                    characters, 
+                    scenario.get('character_name', ''),
+                    scenario.get('book_title', '')
+                )
+                if not other_main_character:
+                    # 다른 주인공이 없으면 제3의 인물로 변경
+                    conversation_partner_type = 'stranger'
+        
         result = scenario_chat_service.first_conversation(
             scenario_id=scenario_id,
             initial_message=message,
             output_language=output_language,
             is_creator=True,
-            conversation_id=conversation_id
+            conversation_id=conversation_id,
+            conversation_partner_type=conversation_partner_type,
+            other_main_character=other_main_character
         )
         
         # 세션별 상태 업데이트
@@ -311,23 +680,46 @@ def continue_conversation(message, scenario_id, conversation_id, history, output
         # 세션별 기록 업데이트
         conversation_histories[conversation_id] = history
         
-        if output_language == "ko":
-            status_msg = f"턴 {session_state['turn_count']}/{result['max_turns']}"
-            turn_info = f"턴: {session_state['turn_count']}/{result['max_turns']}"
+        status_msg = f"턴 {session_state['turn_count']}/{result['max_turns']}"
+        turn_info = f"턴: {session_state['turn_count']}/{result['max_turns']}"
+        
+        # 대화가 시작되었으므로 라디오 버튼 비활성화
+        other_name = session_state.get('other_main_character_name', '')
+        if other_name:
+            radio_choices = [
+                ("제3의 인물 (처음 보는 낯선 사람)", "stranger"),
+                (f"{other_name} (책 속 인물)", "other_main_character")
+            ]
         else:
-            status_msg = f"Turn {session_state['turn_count']}/{result['max_turns']}"
-            turn_info = f"Turn: {session_state['turn_count']}/{result['max_turns']}"
+            radio_choices = [
+                ("제3의 인물 (처음 보는 낯선 사람)", "stranger")
+            ]
+        current_partner_type = session_state.get('conversation_partner_type', 'stranger')
         
         # 5턴 완료 시 저장/취소 버튼 표시
         if session_state['turn_count'] >= result['max_turns']:
-            return history, status_msg, turn_info, gr.update(visible=True), gr.update(visible=True), "", session_state
+            return history, status_msg, turn_info, gr.update(visible=True), gr.update(visible=True), "", session_state, gr.update(choices=radio_choices, value=current_partner_type, interactive=False)
         else:
-            return history, status_msg, turn_info, gr.update(visible=False), gr.update(visible=False), "", session_state
+            return history, status_msg, turn_info, gr.update(visible=False), gr.update(visible=False), "", session_state, gr.update(choices=radio_choices, value=current_partner_type, interactive=False)
     
     except Exception as e:
-        error_msg = f"❌ 대화 계속 실패: {str(e)}" if output_language == "ko" else f"❌ Failed to continue conversation: {str(e)}"
-        turn_msg = f"턴: {session_state.get('turn_count', 0)}/5" if output_language == "ko" else f"Turn: {session_state.get('turn_count', 0)}/5"
-        return history, error_msg, turn_msg, gr.update(visible=False), gr.update(visible=False), "", session_state
+        logger.error(f"What If 시나리오 대화 계속 실패: {str(e)}", exc_info=True)
+        error_msg = f"❌ 대화 계속 실패: {str(e)}"
+        turn_msg = f"턴: {session_state.get('turn_count', 0)}/5"
+        # 에러 시에도 라디오 버튼 상태 유지
+        other_name = session_state.get('other_main_character_name', '')
+        if other_name:
+            radio_choices = [
+                ("제3의 인물 (처음 보는 낯선 사람)", "stranger"),
+                (f"{other_name} (책 속 인물)", "other_main_character")
+            ]
+        else:
+            radio_choices = [
+                ("제3의 인물 (처음 보는 낯선 사람)", "stranger")
+            ]
+        current_partner_type = session_state.get('conversation_partner_type', 'stranger')
+        is_interactive = not bool(session_state.get('conversation_id'))
+        return history, error_msg, turn_msg, gr.update(visible=False), gr.update(visible=False), "", session_state, gr.update(choices=radio_choices, value=current_partner_type, interactive=is_interactive)
 
 
 def confirm_conversation(scenario_id, conversation_id, action, session_state):
@@ -365,33 +757,46 @@ def confirm_conversation(scenario_id, conversation_id, action, session_state):
 
 
 # 서비스 초기화
-init_success, init_message = initialize_service()
+_, init_message = initialize_service()
 
 # Gradio UI 구성
-# Gradio 6.0에서는 theme를 launch()에서 설정
 with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
+    
     gr.Markdown(
         """
         # 🔀 Gaji What If Scenario Chat
         
         **"What If?" 시나리오를 생성하고, 대체 타임라인에서 캐릭터와 대화하세요!**
         
-        **사용 방법:**
-        1. 시나리오 설정: 캐릭터 선택 및 변경사항 설명
-        2. 시나리오 생성: "What If" 시나리오 생성
-        3. 첫 대화 시작: 시나리오에 맞는 캐릭터와 대화 (최대 5턴)
-        4. 대화 저장: 만족스러우면 저장, 아니면 취소
+        ## 📖 사용 방법
+        
+        ### 1️⃣ 시나리오 설정 (1️⃣ 시나리오 생성 탭)
+        - **책 선택**: 대화하고 싶은 책을 선택하세요
+        - **주인공 선택**: 해당 책의 주인공 중 한 명을 선택하세요
+        - **시나리오 제목 입력** (선택사항): What If 시나리오를 생성할 때만 필요합니다
+        - **What If 변경사항 입력** (선택사항):
+          - **캐릭터 속성 변경**: 캐릭터의 성격, 능력, 가치관 등이 달라졌다면?
+          - **사건 변경**: 원작의 중요한 사건이 일어나지 않았거나 다르게 일어났다면?
+          - **배경 변경**: 이야기가 다른 시대나 장소에서 일어났다면?
+        - ⚠️ **주의**: 변경사항을 아무것도 입력하지 않으면 원본 캐릭터와 대화하게 됩니다
+        
+        ### 2️⃣ 시나리오 생성
+        - "✨ 시나리오 생성" 버튼을 클릭하세요
+        - What If 변경사항을 입력했다면 시나리오가 생성됩니다
+        - 변경사항을 입력하지 않았다면 원본 캐릭터 대화 모드로 설정됩니다
+        
+        ### 3️⃣ 첫 대화 시작 (2️⃣ 시나리오 대화 탭)
+        - 시나리오 생성 후 "2️⃣ 시나리오 대화" 탭으로 이동하세요
+        - 대화창에 메시지를 입력하고 전송하거나 엔터 키를 누르세요
+        - 시나리오에 맞는 캐릭터가 응답합니다
+        - **최대 5턴**까지 대화할 수 있습니다
+        
+        ### 4️⃣ 대화 저장 또는 취소
+        - 5턴 대화가 완료되면 "💾 대화 저장" 또는 "❌ 대화 취소" 버튼이 나타납니다
+        - **대화 저장**: 만족스러운 대화라면 저장하여 시나리오에 첫 대화로 기록합니다
+        - **대화 취소**: 만족스럽지 않다면 취소하고 다시 시작할 수 있습니다
         """
     )
-    
-    # 언어 선택 (상단)
-    with gr.Row():
-        language_radio = gr.Radio(
-            choices=[("한국어", "ko"), ("English", "en")],
-            value="ko",
-            label="🌐 언어 선택 / Language Selection",
-            interactive=True
-        )
     
     # 상태 표시
     status_text = gr.Textbox(
@@ -401,7 +806,7 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
         visible=True
     )
     
-    with gr.Tabs() as tabs:
+    with gr.Tabs():
         # 탭 1: 시나리오 생성
         with gr.Tab("1️⃣ 시나리오 생성"):
             with gr.Row():
@@ -419,7 +824,7 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
                     initial_book = get_book_list()[0] if get_book_list() else None
                     initial_characters = get_characters_by_book(initial_book) if initial_book else []
                     initial_character = initial_characters[0] if initial_characters else None
-                    initial_character_info = get_character_info(initial_book, initial_character, "ko") if initial_book and initial_character else "책과 주인공을 선택해주세요."
+                    initial_character_info = get_character_info(initial_book, initial_character) if initial_book and initial_character else "책과 주인공을 선택해주세요."
                     
                     character_dropdown = gr.Dropdown(
                         choices=initial_characters,
@@ -431,18 +836,18 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
                     character_info = gr.Textbox(
                         value=initial_character_info,
                         label="캐릭터 정보",
-                        lines=15,
-                        max_lines=20,
+                        lines=29,
+                        max_lines=29,
                         interactive=False
                     )
                 
                 with gr.Column(scale=2):
-                    gr.Markdown("### 📝 시나리오 설정")
+                    gr.Markdown("### 📝 시나리오 제목")
                     
                     scenario_name = gr.Textbox(
-                        label="시나리오 이름",
-                        placeholder="예: 헤르미온이가 슬리데린에 배정되었다면?",
-                        interactive=True
+                        label="시나리오 제목을 입력하세요!(제목은 what if 설정에 반영되지 않습니다.)",
+                        interactive=True,
+                        lines=2
                     )
                     
                     is_public = gr.Checkbox(
@@ -453,29 +858,33 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
                     
                     gr.Markdown("### 🔀 What If 변경사항")
                     
-                    with gr.Accordion("1. 캐릭터 속성 변경", open=True):
-                        character_property_desc = gr.Textbox(
-                            label="변경 설명",
-                            placeholder="예: 헤르미온이가 그리핀도르 대신 슬리데린에 배정되고, 야망이 더 강해졌다면?",
-                            lines=3,
-                            interactive=True
-                        )
+                    gr.Markdown("#### 1. 캐릭터 속성 변경")
+                    character_property_desc = gr.Textbox(
+                        label="예: 빅터 프랑켄슈타인이 광적인 과학 열정 대신, 타인의 고통에 공감하는 깊은 연민을 가졌다면?",
+                        lines=3,
+                        interactive=True
+                    )
                     
-                    with gr.Accordion("2. 사건 변경", open=True):
-                        event_alteration_desc = gr.Textbox(
-                            label="변경 설명",
-                            placeholder="예: 게츠비가 데이지를 만나지 않았다면?",
-                            lines=3,
-                            interactive=True
-                        )
+                    gr.Markdown("#### 2. 사건 변경")
+                    event_alteration_desc = gr.Textbox(
+                        label="예: 빅터가 피조물을 창조한 직후 도망치는 대신, 피조물에게 언어와 지식을 가르치고 사회에 적응시키려 했다면?",
+                        lines=3,
+                        interactive=True
+                    )
                     
-                    with gr.Accordion("3. 배경 변경", open=True):
-                        setting_modification_desc = gr.Textbox(
-                            label="변경 설명",
-                            placeholder="예: 오만과 편견이 2024년 서울에서 일어났다면?",
-                            lines=3,
-                            interactive=True
-                        )
+                    gr.Markdown("#### 3. 배경 변경")
+                    setting_modification_desc = gr.Textbox(
+                        label="예: 18세기 제네바/잉골슈타트가 아닌, 2040년 서울의 첨단 생명공학 연구소에서 빅터가 인공 생명체를 만들었다면?",
+                        lines=3,
+                        interactive=True
+                    )
+                    
+                    gr.Markdown(
+                        """
+                        ⚠️ **주의**: 변경사항을 아무것도 입력하지 않으면 원본 캐릭터와 대화하게 됩니다.
+                        """,
+                        elem_classes=["warning-text"]
+                    )
                     
                     create_scenario_btn = gr.Button("✨ 시나리오 생성", variant="primary", size="lg")
             
@@ -494,9 +903,21 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
                         value="시나리오를 먼저 생성해주세요."
                     )
                     
+                    # 대화 상대 선택 (동적으로 업데이트됨)
+                    conversation_partner_radio = gr.Radio(
+                        choices=[
+                            ("제3의 인물 (처음 보는 낯선 사람)", "stranger"),
+                            ("다른 주인공 (책 속 인물)", "other_main_character")
+                        ],
+                        value="stranger",
+                        label="대화 상대 선택",
+                        info="대화 시작 전에만 선택 가능합니다"
+                    )
+                    
                     conversation_status = gr.Textbox(
                         label="대화 상태",
                         interactive=False,
+                        lines=2,
                         value=""
                     )
                     
@@ -518,8 +939,6 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
                     chatbot = gr.Chatbot(
                         height=500,
                         label="대화창"
-                        # Gradio 6.0에서는 type, show_copy_button 파라미터가 제거됨
-                        # Chatbot은 기본적으로 긴 텍스트를 표시할 수 있음
                     )
                     
                     with gr.Row():
@@ -527,6 +946,8 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
                             label="💬 메시지를 입력하세요",
                             placeholder="예: 안녕하세요! 이 대체 타임라인에서 당신의 인생은 어떻게 달라졌나요?",
                             scale=4,
+                            lines=1,
+                            max_lines=1,
                             container=False
                         )
                         submit_btn = gr.Button("전송", variant="primary", scale=1)
@@ -548,61 +969,49 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
     def set_example3():
         return "이 변화가 당신의 감정과 가치관에 어떤 영향을 미쳤나요?"
     
-    def on_book_selected(book_display, language):
+    def on_book_selected(book_display):
         """책 선택 시 해당 책의 캐릭터 목록 업데이트"""
         if not book_display:
-            msg = "책을 선택해주세요." if language == "ko" else "Please select a book."
-            return gr.update(choices=[], value=None), gr.update(value=msg)
+            return gr.update(choices=[], value=None), gr.update(value="책을 선택해주세요.")
         
         characters = get_characters_by_book(book_display)
         if characters:
-            msg = "주인공을 선택해주세요." if language == "ko" else "Please select a character."
-            return gr.update(choices=characters, value=characters[0]), gr.update(value=msg)
+            return gr.update(choices=characters, value=characters[0]), gr.update(value=get_character_info(book_display, characters[0]))
         else:
-            msg = "이 책의 캐릭터를 찾을 수 없습니다." if language == "ko" else "No characters found for this book."
-            return gr.update(choices=[], value=None), gr.update(value=msg)
+            return gr.update(choices=[], value=None), gr.update(value="이 책의 캐릭터를 찾을 수 없습니다.")
     
-    def on_character_selected(book_display, character_name, language):
+    def on_character_selected(book_display, character_name):
         """캐릭터 선택 시 정보 업데이트"""
         if not book_display or not character_name:
-            return "책과 주인공을 선택해주세요." if language == "ko" else "Please select a book and character."
-        return get_character_info(book_display, character_name, language)
-    
-    def on_language_changed(language, book_display, character_name):
-        """언어 변경 시 캐릭터 정보 업데이트"""
-        if book_display and character_name:
-            return get_character_info(book_display, character_name, language)
-        return "책과 주인공을 선택해주세요." if language == "ko" else "Please select a book and character."
-    
-    # 언어 변경 시 캐릭터 정보 업데이트
-    language_radio.change(
-        fn=on_language_changed,
-        inputs=[language_radio, book_dropdown, character_dropdown],
-        outputs=[character_info]
-    )
+            return "책과 주인공을 선택해주세요."
+        return get_character_info(book_display, character_name)
     
     # 책 선택 시 캐릭터 목록 업데이트
     book_dropdown.change(
         fn=on_book_selected,
-        inputs=[book_dropdown, language_radio],
+        inputs=[book_dropdown],
         outputs=[character_dropdown, character_info]
     )
     
     # 캐릭터 선택 시 정보 업데이트
     character_dropdown.change(
         fn=on_character_selected,
-        inputs=[book_dropdown, character_dropdown, language_radio],
+        inputs=[book_dropdown, character_dropdown],
         outputs=[character_info]
     )
     
-    # 세션별 상태 관리 (gr.State 사용) - 시나리오 생성 전에 정의
+    # 세션별 상태 관리
     session_state = gr.State(value={
         'scenario_id': None,
         'conversation_id': None,
-        'turn_count': 0
+        'turn_count': 0,
+        'is_basic_character_chat': False,
+        'book_title': None,
+        'character_name': None,
+        'conversation_partner_type': 'stranger'  # 'stranger' or 'other_main_character'
     })
     
-    # 시나리오 생성
+    # 시나리오 생성 (로딩 스피너 표시)
     create_scenario_btn.click(
         fn=create_scenario,
         inputs=[
@@ -615,47 +1024,72 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
             is_public,
             session_state
         ],
-        outputs=[scenario_result, scenario_id_display, current_scenario_display, chatbot, session_state]
+        outputs=[scenario_result, scenario_id_display, current_scenario_display, chatbot, session_state, conversation_partner_radio],
+        show_progress=True
     )
     
     # 메시지 전송
-    def on_submit(message, history, current_scenario_display_val, language, state):
-        # 세션별 상태에서 시나리오 ID 가져오기
+    def on_submit(message, history, partner_type, state):
+        # 대화 상대 타입 저장
+        state['conversation_partner_type'] = partner_type
+        
+        # 라디오 버튼 업데이트 준비 (공통)
+        other_name = state.get('other_main_character_name', '')
+        if other_name:
+            radio_choices = [
+                ("제3의 인물 (처음 보는 낯선 사람)", "stranger"),
+                (f"{other_name} (책 속 인물)", "other_main_character")
+            ]
+        else:
+            radio_choices = [
+                ("제3의 인물 (처음 보는 낯선 사람)", "stranger")
+            ]
+        current_partner_type = state.get('conversation_partner_type', 'stranger')
+        is_interactive = not bool(state.get('conversation_id'))
+        
+        # 기본 캐릭터 대화 모드인지 확인
+        if state.get('is_basic_character_chat'):
+            if not message.strip():
+                return history, "", "", gr.update(visible=False), gr.update(visible=False), "", state, gr.update(choices=radio_choices, value=current_partner_type, interactive=is_interactive)
+            # 기본 캐릭터 대화는 conversation_id가 없으므로 항상 start_first_conversation 호출
+            return start_first_conversation(message, None, history, state)
+        
+        # What If 시나리오 대화 모드
         if not state.get('scenario_id'):
-            error_msg = "❌ 시나리오를 먼저 생성해주세요." if language == "ko" else "❌ Please create a scenario first."
-            turn_msg = "턴: 0/5" if language == "ko" else "Turn: 0/5"
-            return history, error_msg, turn_msg, gr.update(visible=False), gr.update(visible=False), "", state
+            error_msg = "❌ 시나리오를 먼저 생성해주세요."
+            turn_msg = "턴: 0/5"
+            return history, error_msg, turn_msg, gr.update(visible=False), gr.update(visible=False), "", state, gr.update(choices=radio_choices, value=current_partner_type, interactive=is_interactive)
         
         if not message.strip():
-            turn_msg = f"턴: {state.get('turn_count', 0)}/5" if language == "ko" else f"Turn: {state.get('turn_count', 0)}/5"
-            return history, "", turn_msg, gr.update(visible=False), gr.update(visible=False), "", state
+            turn_msg = f"턴: {state.get('turn_count', 0)}/5"
+            return history, "", turn_msg, gr.update(visible=False), gr.update(visible=False), "", state, gr.update(choices=radio_choices, value=current_partner_type, interactive=is_interactive)
         
         # 첫 대화인지 계속 대화인지 확인
         if not state.get('conversation_id'):
-            return start_first_conversation(message, state['scenario_id'], history, language, state)
+            return start_first_conversation(message, state['scenario_id'], history, state)
         else:
-            return continue_conversation(message, state['scenario_id'], state['conversation_id'], history, language, state)
+            return continue_conversation(message, state['scenario_id'], state['conversation_id'], history, state)
     
     msg.submit(
         fn=on_submit,
-        inputs=[msg, chatbot, current_scenario_display, language_radio, session_state],
-        outputs=[chatbot, conversation_status, turn_info, save_btn, cancel_btn, msg, session_state]
+        inputs=[msg, chatbot, conversation_partner_radio, session_state],
+        outputs=[chatbot, conversation_status, turn_info, save_btn, cancel_btn, msg, session_state, conversation_partner_radio]
     )
     
     submit_btn.click(
         fn=on_submit,
-        inputs=[msg, chatbot, current_scenario_display, language_radio, session_state],
-        outputs=[chatbot, conversation_status, turn_info, save_btn, cancel_btn, msg, session_state]
+        inputs=[msg, chatbot, conversation_partner_radio, session_state],
+        outputs=[chatbot, conversation_status, turn_info, save_btn, cancel_btn, msg, session_state, conversation_partner_radio]
     )
     
     # 대화 저장/취소
-    def on_save(current_scenario_display_val, history, state):
+    def on_save(history, state):
         if not state.get('scenario_id') or not state.get('conversation_id'):
             return "❌ 저장할 대화가 없습니다.", [], state
         result_msg, updated_state = confirm_conversation(state['scenario_id'], state['conversation_id'], "save", state)
         return result_msg, [], updated_state
     
-    def on_cancel(current_scenario_display_val, history, state):
+    def on_cancel(history, state):
         if not state.get('scenario_id') or not state.get('conversation_id'):
             return "❌ 취소할 대화가 없습니다.", [], state
         result_msg, updated_state = confirm_conversation(state['scenario_id'], state['conversation_id'], "cancel", state)
@@ -663,13 +1097,13 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
     
     save_btn.click(
         fn=on_save,
-        inputs=[current_scenario_display, chatbot, session_state],
+        inputs=[chatbot, session_state],
         outputs=[confirm_result, chatbot, session_state]
     )
     
     cancel_btn.click(
         fn=on_cancel,
-        inputs=[current_scenario_display, chatbot, session_state],
+        inputs=[chatbot, session_state],
         outputs=[confirm_result, chatbot, session_state]
     )
     
@@ -681,6 +1115,9 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
 
 if __name__ == "__main__":
     try:
+        logger.info("Gradio 앱 실행 시작...")
+        logger.info("Public 링크 생성을 시도합니다...")
+        
         # public 링크 생성을 시도
         demo.launch(
             server_name="localhost",
@@ -692,13 +1129,20 @@ if __name__ == "__main__":
         )
     except Exception as e:
         # public 링크 생성 실패 시 local URL만 사용
+        logger.warning(f"⚠️ Public 링크 생성 실패: {str(e)}")
+        logger.info("📍 Local URL만 사용합니다: http://localhost:7860")
         print(f"⚠️ Public 링크 생성 실패: {str(e)}")
         print("📍 Local URL만 사용합니다: http://localhost:7860")
-        demo.launch(
-            server_name="localhost",
-            server_port=7860,
-            share=False,
-            show_error=True,
-            quiet=False,
-            theme=gr.themes.Soft()
-        )
+        
+        try:
+            demo.launch(
+                server_name="localhost",
+                server_port=7860,
+                share=False,
+                show_error=True,
+                quiet=False,
+                theme=gr.themes.Soft()
+            )
+        except Exception as launch_error:
+            logger.error(f"Gradio 앱 실행 실패: {str(launch_error)}", exc_info=True)
+            raise

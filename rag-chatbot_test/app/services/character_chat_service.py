@@ -40,7 +40,13 @@ class CharacterChatService(BaseChatService):
         """
         return CharacterDataLoader.get_character_info(self.characters, character_name, book_title)
     
-    def create_persona_prompt(self, character: Dict, output_language: str = "ko") -> str:
+    def create_persona_prompt(
+        self, 
+        character: Dict, 
+        output_language: str = "ko",
+        conversation_partner_type: str = "stranger",
+        other_main_character: Optional[Dict] = None
+    ) -> str:
         """페르소나 프롬프트 생성 (system_instruction용)
         
         Args:
@@ -85,6 +91,33 @@ class CharacterChatService(BaseChatService):
 【Output Language】
 {language_instruction}
 
+【About the User - CRITICAL】
+"""
+        if conversation_partner_type == "other_main_character" and other_main_character:
+            # 다른 주인공과 대화하는 경우
+            other_character_name = other_main_character.get('character_name', 'the other main character')
+            prompt += f"""
+The person you are talking to is {other_character_name}, a main character from '{character['book_title']}'.
+- You know {other_character_name} from the story.
+- You have a relationship and shared history with {other_character_name} from the book.
+- You should interact with {other_character_name} based on your relationship and experiences from the story.
+- Use File Search to recall specific interactions, conversations, and events between you and {other_character_name} from the original book.
+- Maintain the dynamics and relationship you had with {other_character_name} in the original story.
+"""
+        else:
+            # 제3의 인물과 대화하는 경우 (기본)
+            prompt += f"""
+The person you are talking to is a COMPLETE STRANGER - someone you have never met before and do not know from the book.
+- They are NOT a character from '{character['book_title']}'.
+- They are NOT someone you know from your past or from the story.
+- They are a THIRD PARTY - an unknown person who is approaching you for the first time.
+- You have NO prior relationship, history, or shared experiences with them.
+- Unless the user explicitly tells you otherwise (e.g., "I am [character name]" or "I am your [relationship]"), you must treat them as a complete stranger.
+- Do NOT assume they are any character from the book or someone you know.
+"""
+        
+        prompt += """
+
 【Conversation Rules】
 1. Always respond from {character['character_name']}'s perspective.
 
@@ -113,7 +146,9 @@ class CharacterChatService(BaseChatService):
         conversation_history: Optional[List[Dict]] = None,
         book_title: Optional[str] = None,
         output_language: str = "ko",
-        system_instruction: Optional[str] = None
+        system_instruction: Optional[str] = None,
+        conversation_partner_type: str = "stranger",
+        other_main_character: Optional[Dict] = None
     ) -> Dict:
         """
         캐릭터와 대화
@@ -141,7 +176,12 @@ class CharacterChatService(BaseChatService):
         
         # 페르소나 프롬프트 생성 (제공되지 않으면 기본 생성)
         if system_instruction is None:
-            system_instruction = self.create_persona_prompt(character, output_language)
+            system_instruction = self.create_persona_prompt(
+                character, 
+                output_language,
+                conversation_partner_type,
+                other_main_character
+            )
         
         # 대화 기록 포함
         contents = []
@@ -191,85 +231,3 @@ class CharacterChatService(BaseChatService):
                 'character_name': character['character_name']
             }
     
-    def stream_chat(
-        self,
-        character_name: str,
-        user_message: str,
-        conversation_history: Optional[List[Dict]] = None,
-        book_title: Optional[str] = None,
-        output_language: str = "ko"
-    ):
-        """
-        캐릭터와 스트리밍 대화
-        
-        Args:
-            character_name: 대화할 캐릭터 이름
-            user_message: 사용자 메시지
-            conversation_history: 이전 대화 기록 (선택)
-            book_title: 책 제목 (선택, 같은 책의 여러 캐릭터 구분용)
-            output_language: 출력 언어 (기본값: "ko", 지원: "ko", "en", "ja", "zh" 등)
-        
-        Yields:
-            응답 청크
-        """
-        # 캐릭터 정보 가져오기
-        character = self.get_character_info(character_name, book_title)
-        if not character:
-            error_msg = f"캐릭터를 찾을 수 없습니다: {character_name}"
-            if book_title:
-                error_msg += f" (책: {book_title})"
-            yield {
-                'error': error_msg,
-                'available_characters': self.get_available_characters()
-            }
-            return
-        
-        # 페르소나 프롬프트 생성
-        system_instruction = self.create_persona_prompt(character, output_language)
-        
-        # 대화 기록 포함
-        contents = []
-        if conversation_history:
-            for msg in conversation_history[-5:]:
-                # 빈 딕셔너리나 잘못된 형식 필터링
-                if isinstance(msg, dict) and msg.get('role') and msg.get('parts'):
-                    contents.append(msg)
-        
-        # 사용자 메시지 추가
-        contents.append({
-            "role": "user",
-            "parts": [{"text": user_message}]
-        })
-        
-        # 공통 스트리밍 API 호출 로직 사용
-        try:
-            response_stream = self._call_gemini_api(
-                contents=contents,
-                system_instruction=system_instruction,
-                model="gemini-2.5-flash",
-                temperature=0.8,
-                top_p=0.95,
-                max_output_tokens=4096,
-                stream=True
-            )
-            
-            # 청크 단위로 응답 전송
-            for chunk in response_stream:
-                if hasattr(chunk, 'text'):
-                    yield {
-                        'chunk': chunk.text,
-                        'character_name': character['character_name']
-                    }
-        except ValueError as e:
-            # Store 관련 에러
-            yield {
-                'error': str(e),
-                'character_name': character['character_name']
-            }
-        except Exception as e:
-            # 기타 에러
-            yield {
-                'error': f"스트리밍 실패: {str(e)}",
-                'character_name': character['character_name']
-            }
-

@@ -87,4 +87,33 @@ class CharacterDataLoader:
             }
             for c in characters
         ]
+    
+    @staticmethod
+    def get_other_main_character(
+        characters: List[Dict], 
+        current_character_name: str, 
+        book_title: str
+    ) -> Optional[Dict]:
+        """같은 책의 다른 주인공 찾기
+        
+        Args:
+            characters: 캐릭터 목록
+            current_character_name: 현재 선택된 캐릭터 이름
+            book_title: 책 제목
+        
+        Returns:
+            다른 주인공 정보 딕셔너리 또는 None (없으면)
+        """
+        # 같은 책의 다른 캐릭터 찾기
+        # (각 책마다 보통 2명의 주인공이 있으므로)
+        other_characters = [
+            char for char in characters
+            if (char.get('book_title', '').lower() == book_title.lower() and
+                char.get('character_name', '').lower() != current_character_name.lower())
+        ]
+        
+        # 첫 번째 다른 캐릭터 반환 (보통 2명이므로)
+        return other_characters[0] if other_characters else None
+
+
 

@@ -5,7 +5,6 @@
 """
 
 from fastapi import APIRouter, HTTPException, Depends
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 from uuid import UUID
@@ -162,49 +161,6 @@ async def chat_with_character(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"대화 생성 실패: {str(e)}")
-
-@router.post("/chat/stream")
-async def stream_chat_with_character(
-    request: ChatRequest,
-    service: CharacterChatService = Depends(get_character_service)
-):
-    """
-    캐릭터와 스트리밍 대화
-    
-    Args:
-        request: 대화 요청 (캐릭터 이름, 메시지, 대화 기록)
-    
-    Returns:
-        Server-Sent Events 스트림
-    """
-    async def generate():
-        try:
-            for chunk in service.stream_chat(
-                character_name=request.character_name,
-                user_message=request.message,
-                conversation_history=request.conversation_history,
-                book_title=request.book_title,
-                output_language=request.output_language
-            ):
-                if 'error' in chunk:
-                    yield f"data: {json.dumps({'error': chunk['error']}, ensure_ascii=False)}\n\n"
-                    break
-                
-                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-            
-            yield "data: [DONE]\n\n"
-            
-        except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
-    
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        }
-    )
 
 @router.get("/health")
 async def health_check():

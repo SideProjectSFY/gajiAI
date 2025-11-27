@@ -104,7 +104,6 @@ class BaseChatService:
         temperature: float = 0.8,
         top_p: float = 0.95,
         max_output_tokens: int = 4096,
-        stream: bool = False
     ):
         """
         Gemini API 호출 (재시도 로직 포함)
@@ -116,7 +115,6 @@ class BaseChatService:
             temperature: 온도
             top_p: top_p
             max_output_tokens: 최대 출력 토큰
-            stream: 스트리밍 여부
         
         Returns:
             API 응답 또는 스트림
@@ -154,18 +152,11 @@ class BaseChatService:
                     "max_output_tokens": max_output_tokens
                 }
                 
-                if stream:
-                    response = self.client.models.generate_content_stream(
-                        model=model,
-                        contents=contents,
-                        config=config
-                    )
-                else:
-                    response = self.client.models.generate_content(
-                        model=model,
-                        contents=contents,
-                        config=config
-                    )
+                response = self.client.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=config
+                )
                 
                 return response
                 

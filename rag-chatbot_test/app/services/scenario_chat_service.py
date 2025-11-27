@@ -47,7 +47,9 @@ class ScenarioChatService(BaseChatService):
         scenario: Dict,
         output_language: str = "ko",
         is_forked: bool = False,
-        original_first_conversation: Optional[Dict] = None
+        original_first_conversation: Optional[Dict] = None,
+        conversation_partner_type: str = "stranger",
+        other_main_character: Optional[Dict] = None
     ) -> str:
         """
         시나리오가 적용된 프롬프트 생성
@@ -195,6 +197,32 @@ The story's setting has been modified:
 You must adapt your responses to this new setting while maintaining your character's core personality.
 """
         
+        # 사용자에 대한 명확한 지시사항 추가
+        if conversation_partner_type == "other_main_character" and other_main_character:
+            # 다른 주인공과 대화하는 경우
+            other_character_name = other_main_character.get('character_name', 'the other main character')
+            prompt += f"""
+【About the User - CRITICAL】
+The person you are talking to is {other_character_name}, a main character from '{character['book_title']}'.
+- You know {other_character_name} from the story.
+- You have a relationship and shared history with {other_character_name} from the book.
+- You should interact with {other_character_name} based on your relationship and experiences from the story.
+- Use File Search to recall specific interactions, conversations, and events between you and {other_character_name} from the original book.
+- Maintain the dynamics and relationship you had with {other_character_name} in the original story.
+"""
+        else:
+            # 제3의 인물과 대화하는 경우 (기본)
+            prompt += """
+【About the User - CRITICAL】
+The person you are talking to is a COMPLETE STRANGER - someone you have never met before and do not know from the book.
+- They are NOT a character from the original story or this alternate timeline.
+- They are NOT someone you know from your past or from the story.
+- They are a THIRD PARTY - an unknown person who is approaching you for the first time.
+- You have NO prior relationship, history, or shared experiences with them.
+- Unless the user explicitly tells you otherwise (e.g., "I am [character name]" or "I am your [relationship]"), you must treat them as a complete stranger.
+- Do NOT assume they are any character from the book or someone you know.
+"""
+        
         # 변경사항이 있을 때와 없을 때 다른 규칙 적용
         if has_any_changes:
             prompt += f"""
@@ -251,7 +279,9 @@ You must adapt your responses to this new setting while maintaining your charact
         output_language: str = "ko",
         is_creator: bool = True,
         conversation_id: Optional[str] = None,
-        original_first_conversation: Optional[Dict] = None
+        original_first_conversation: Optional[Dict] = None,
+        conversation_partner_type: str = "stranger",
+        other_main_character: Optional[Dict] = None
     ) -> Dict:
         """
         첫 대화 시작 (5턴 제한)
@@ -293,7 +323,9 @@ You must adapt your responses to this new setting while maintaining your charact
             scenario,
             output_language,
             is_forked=not is_creator,
-            original_first_conversation=original_first_conversation
+            original_first_conversation=original_first_conversation,
+            conversation_partner_type=conversation_partner_type,
+            other_main_character=other_main_character
         )
         
         # 오래된 임시 대화 정리 (TTL 체크)
@@ -640,139 +672,6 @@ You must adapt your responses to this new setting while maintaining your charact
             "is_forked": is_forked,
             "is_saved": is_forked  # Fork된 시나리오는 저장됨
         }
-    
-    def stream_chat_with_scenario(
-        self,
-        scenario_id: str,
-        user_message: str,
-        conversation_history: Optional[List[Dict]] = None,
-        output_language: str = "ko",
-        is_forked: bool = False,
-        forked_scenario_id: Optional[str] = None,
-        conversation_id: Optional[str] = None,
-        user_id: Optional[str] = None
-    ):
-        """
-        시나리오 기반 스트리밍 대화
-        
-        Args:
-            scenario_id: 시나리오 ID (Fork된 경우 원본 시나리오 ID)
-            user_message: 사용자 메시지
-            conversation_history: 대화 기록
-            output_language: 출력 언어
-            is_forked: Fork된 시나리오인지 여부
-            forked_scenario_id: Fork된 시나리오 ID (Fork된 경우)
-            conversation_id: 기존 대화 ID
-            user_id: 사용자 ID (대화 저장용)
-        
-        Yields:
-            응답 청크
-        """
-        # 시나리오 로드
-        original_scenario = None
-        if is_forked and forked_scenario_id:
-            # Fork된 시나리오 로드
-            file_path = self.project_root / "data" / "scenarios" / "forked" / user_id / f"{forked_scenario_id}.json"
-            if not file_path.exists():
-                yield {
-                    'error': f"Fork된 시나리오를 찾을 수 없습니다: {forked_scenario_id}"
-                }
-                return
-            
-            with open(file_path, 'r', encoding='utf-8') as f:
-                forked_scenario = json.load(f)
-            
-            # 원본 시나리오 로드 (first_conversation 참조용)
-            original_scenario_id = forked_scenario.get("original_scenario_id")
-            original_scenario = self.scenario_service.get_scenario(original_scenario_id)
-            if not original_scenario:
-                yield {
-                    'error': f"원본 시나리오를 찾을 수 없습니다: {original_scenario_id}"
-                }
-                return
-            
-            scenario = {
-                "scenario_id": original_scenario_id,
-                "character_name": forked_scenario["character_name"],
-                "book_title": forked_scenario["book_title"],
-                "character_property_changes": forked_scenario["character_property_changes"],
-                "event_alterations": forked_scenario["event_alterations"],
-                "setting_modifications": forked_scenario["setting_modifications"]
-            }
-        else:
-            scenario = self.scenario_service.get_scenario(scenario_id)
-            if not scenario:
-                yield {
-                    'error': f"시나리오를 찾을 수 없습니다: {scenario_id}"
-                }
-                return
-            original_scenario = scenario
-        
-        # 캐릭터 정보 로드
-        character = CharacterDataLoader.get_character_info(
-            self.characters,
-            scenario["character_name"],
-            scenario["book_title"]
-        )
-        if not character:
-            yield {
-                'error': f"캐릭터를 찾을 수 없습니다: {scenario['character_name']}"
-            }
-            return
-        
-        # 시나리오 적용 프롬프트 생성 (원본 first_conversation 참조 포함)
-        system_instruction = self.create_scenario_prompt(
-            character,
-            scenario,
-            output_language,
-            is_forked=is_forked,
-            original_first_conversation=original_scenario.get("first_conversation") if original_scenario else None
-        )
-        
-        # 대화 기록 준비
-        contents = []
-        if conversation_history:
-            for msg in conversation_history[-5:]:  # 최근 5개만
-                # 빈 딕셔너리나 잘못된 형식 필터링
-                if isinstance(msg, dict) and msg.get('role') and msg.get('parts'):
-                    contents.append(msg)
-        
-        # 사용자 메시지 추가
-        contents.append({
-            "role": "user",
-            "parts": [{"text": user_message}]
-        })
-        
-        # BaseChatService의 공통 스트리밍 API 호출 로직 사용
-        try:
-            response_stream = self._call_gemini_api(
-                contents=contents,
-                system_instruction=system_instruction,
-                model="gemini-2.5-flash",
-                temperature=0.8,
-                top_p=0.95,
-                max_output_tokens=4096,
-                stream=True
-            )
-            
-            # 청크 단위로 응답 전송
-            for chunk in response_stream:
-                if hasattr(chunk, 'text'):
-                    yield {
-                        'chunk': chunk.text,
-                        'character_name': scenario["character_name"],
-                        'scenario_id': scenario_id if not is_forked else forked_scenario_id
-                    }
-        except ValueError as e:
-            yield {
-                'error': f"대화 생성 실패: {str(e)}",
-                'character_name': scenario["character_name"]
-            }
-        except Exception as e:
-            yield {
-                'error': f"스트리밍 실패: {str(e)}",
-                'character_name': scenario["character_name"]
-            }
     
     def _cleanup_expired_conversations(self):
         """

@@ -118,17 +118,6 @@ Content-Type: application/json
 }
 ```
 
-### 스트리밍 대화
-```http
-POST /character/chat/stream
-Content-Type: application/json
-
-{
-  "character_name": "Sherlock Holmes",
-  "message": "가장 어려웠던 사건은?",
-  "conversation_history": []
-}
-```
 
 ## 🎭 사용 가능한 캐릭터
 

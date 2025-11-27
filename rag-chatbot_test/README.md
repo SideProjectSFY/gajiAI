@@ -12,7 +12,7 @@
 - 🎭 **페르소나 시스템**: 각 캐릭터의 성격, 말투, 가치관을 반영한 대화
 - 🔀 **What If 시나리오**: 캐릭터 속성, 사건, 배경 변경을 통한 대체 타임라인 생성
 - 🔍 **자동 인용**: Gemini File Search가 원문 출처를 자동으로 제공
-- 💬 **스트리밍 응답**: 실시간 대화 경험
+- 👥 **대화 상대 선택**: 제3의 인물 또는 같은 책의 다른 주인공과 대화 선택
 - 🔑 **API 키 로테이션**: 여러 API 키 자동 전환으로 안정적인 서비스
 
 ## 🎬 사용 가능한 캐릭터
@@ -174,25 +174,6 @@ Content-Type: application/json
 }
 ```
 
-### 3. 스트리밍 대화
-
-```http
-POST /character/chat/stream
-Content-Type: application/json
-
-{
-  "character_name": "Elizabeth Bennet",
-  "message": "다아시 씨에 대한 첫인상은 어떠셨나요?"
-}
-```
-
-**응답** (Server-Sent Events):
-```
-data: {"chunk": "처음에는", "character_name": "Elizabeth Bennet"}
-data: {"chunk": " 그분을", "character_name": "Elizabeth Bennet"}
-...
-data: [DONE]
-```
 
 ## 🔀 What If 시나리오 API
 
@@ -501,7 +482,7 @@ CharacterDataLoader (유틸리티)
 CharacterChatService (BaseChatService 상속)
   ├─ CharacterDataLoader 사용
   ├─ 기본 페르소나 프롬프트 생성
-  └─ chat(), stream_chat()
+  └─ chat()
 
 ScenarioChatService (BaseChatService 상속)
   ├─ CharacterDataLoader 직접 사용
@@ -535,18 +516,17 @@ ScenarioChatService (BaseChatService 상속)
 - 할당량 초과 시 자동 재시도
 - 실패한 키 일정 시간 후 재활성화
 
-### 4. 스트리밍 응답
-- 실시간 대화 경험
-- Server-Sent Events (SSE)
-- 낮은 지연시간
-
-### 5. What If 시나리오 시스템
+### 4. What If 시나리오 시스템
 - **시나리오 생성**: 캐릭터 속성, 사건, 배경 변경을 통한 대체 타임라인 생성
 - **첫 대화**: 시나리오에 맞춘 캐릭터와의 대화 (최대 5턴)
 - **시나리오 Fork**: 다른 사용자의 시나리오를 기반으로 새로운 대화 시작
 - **공개 시나리오**: 커뮤니티와 시나리오 공유 및 탐색
+- **대화 상대 선택**: 제3의 인물 또는 같은 책의 다른 주인공과 대화 선택 가능
+  - **제3의 인물**: 캐릭터가 처음 보는 완전한 낯선 사람으로 인식
+  - **다른 주인공**: 같은 책의 다른 주인공으로 인식 (예: Victor Frankenstein 선택 시 The Creature와 대화)
+  - 대화 시작 전에만 선택 가능, 대화 중에는 수정 불가
 
-### 6. 서비스 아키텍처 최적화
+### 5. 서비스 아키텍처 최적화
 - **BaseChatService**: 공통 API 호출 로직을 상속으로 재사용
 - **CharacterDataLoader**: 캐릭터 정보 로드 로직을 유틸리티로 분리
 - **의존성 최소화**: 각 서비스가 필요한 기능만 사용
@@ -810,8 +790,8 @@ data/characters/
 
 - [x] 캐릭터 페르소나 자동 생성 (File Search 기반)
 - [x] 서비스 아키텍처 최적화 (BaseChatService, CharacterDataLoader)
+- [x] 대화 상대 선택 기능 (제3의 인물 / 다른 주인공)
 - [ ] 더 많은 캐릭터 추가
-- [x] 다국어 지원 (영어/한국어)
 - [ ] 음성 대화 기능
 - [ ] 감정 분석 및 반영
 - [ ] 프론트엔드 웹 인터페이스
