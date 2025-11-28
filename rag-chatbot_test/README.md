@@ -158,7 +158,10 @@ Content-Type: application/json
 {
   "character_name": "Victor Frankenstein",
   "message": "당신의 창조물에 대해 어떻게 생각하시나요?",
-  "conversation_history": []
+  "conversation_history": [],  // 선택사항
+  "conversation_id": null,  // 이어서 대화 시 기존 ID
+  "conversation_partner_type": "stranger",  // "stranger" 또는 "other_main_character"
+  "other_main_character": null  // conversation_partner_type이 "other_main_character"일 때 필수
 }
 ```
 
@@ -168,11 +171,19 @@ Content-Type: application/json
   "response": "아... 제 창조물이라니. 그것은 제 인생 최대의 실수였습니다...",
   "character_name": "Victor Frankenstein",
   "book_title": "Frankenstein; Or, The Modern Prometheus",
+  "conversation_id": "conv_123",  // 임시 대화 ID (5턴 연속 대화 가능)
+  "turn_count": 1,
+  "max_turns": 5,
   "grounding_metadata": {
     "citations": [...]
   }
 }
 ```
+
+**참고**:
+- 기본 캐릭터 대화도 임시 대화 저장 기능 지원 (최대 5턴 연속 대화)
+- `conversation_id`를 사용하여 대화를 이어갈 수 있음
+- 시나리오 대화와 달리 최종 저장/취소 기능은 없음 (5턴 후 자동 만료)
 
 
 ## 🔀 What If 시나리오 API
@@ -180,23 +191,24 @@ Content-Type: application/json
 ### 1. 시나리오 생성
 
 ```http
-POST /scenario/create
+POST /scenario/create?creator_id={user_id}
 Content-Type: application/json
 
 {
-  "scenario_name": "헤르미온이가 슬리데린에 배정되었다면?",
-  "book_title": "Pride and Prejudice",
-  "character_name": "Elizabeth Bennet",
-  "is_public": false,
+  "scenario_name": "셜록홈즈가 현대사회에서 활동한다면?",
+  "book_title": "The Adventures of Sherlock Holmes",
+  "character_name": "Sherlock Holmes",
+  "is_public": true,
   "character_property_changes": {
     "enabled": true,
-    "description": "그리핀도르 대신 슬리데린에 배정되고, 야망이 더 강해짐"
+    "description": "이성적이고 논리적인 추리를 중시하지만 사람의 감정 역시 추리에 중요한 요소라고 생각한다."
   },
   "event_alterations": {
     "enabled": false
   },
   "setting_modifications": {
-    "enabled": false
+    "enabled": true,
+    "description": "2025년 한국 현대사회를 배경으로 최신 과학기술들을 사용한다."
   }
 }
 ```
@@ -204,70 +216,78 @@ Content-Type: application/json
 **응답**:
 ```json
 {
-  "scenario_id": "scenario_123",
-  "scenario_name": "헤르미온이가 슬리데린에 배정되었다면?",
-  "book_title": "Pride and Prejudice",
-  "character_name": "Elizabeth Bennet",
+  "scenario_id": "1a190443-5d3f-45e1-bc1d-cc192d46e76f",
+  "scenario_name": "셜록홈즈가 현대사회에서 활동한다면?",
+  "book_title": "The Adventures of Sherlock Holmes",
+  "character_name": "Sherlock Holmes",
   "creator_id": "default_user",
-  "is_public": false,
-  "created_at": "2024-01-01T00:00:00Z"
+  "is_public": true,
+  "created_at": "2025-11-28T06:14:11.202282Z"
 }
 ```
 
-### 2. 첫 대화 시작 (원본 시나리오)
+### 2. 시나리오 대화 (통합 엔드포인트)
+
+시나리오 대화는 하나의 통합 엔드포인트로 처리됩니다:
 
 ```http
-POST /scenario/{scenario_id}/first-conversation
+POST /scenario/{scenario_id}/chat?creator_id={user_id}
 Content-Type: application/json
 
 {
-  "initial_message": "안녕하세요, 헤르미온이님!",
-  "conversation_id": null
+  "message": "안녕하세요, 헤르미온이님!",
+  "conversation_id": null,  // 첫 대화 시작 시 null, 이어서 대화 시 기존 ID
+  "conversation_partner_type": "stranger",  // "stranger" 또는 "other_main_character"
+  "other_main_character": null  // conversation_partner_type이 "other_main_character"일 때 필수
 }
 ```
 
-**응답**:
+**동작 방식**:
+- `action`이 없고 `conversation_id`가 없으면: 첫 대화 시작
+- `action`이 없고 `conversation_id`가 있으면: 대화 이어가기 (최대 5턴)
+- `action`이 있으면: 저장/취소 처리 (5턴 완료 후)
+
+**첫 대화 시작 응답**:
 ```json
 {
-  "response": "안녕하세요...",
   "conversation_id": "conv_123",
+  "scenario_id": "scenario_123",
+  "response": "안녕하세요...",
   "turn_count": 1,
   "max_turns": 5,
-  "is_regenerable": true,
-  "is_saved": false
+  "is_temporary": true
 }
 ```
 
-### 3. 첫 대화 계속 (턴 2~5)
-
+**대화 이어가기 요청**:
 ```http
-POST /scenario/{scenario_id}/first-conversation/continue
+POST /scenario/{scenario_id}/chat?creator_id={user_id}
 Content-Type: application/json
 
 {
-  "conversation_id": "conv_123",
-  "message": "슬리데린에 배정된 후 어떤 변화가 있었나요?"
+  "message": "슬리데린에 배정된 후 어떤 변화가 있었나요?",
+  "conversation_id": "conv_123"
 }
 ```
 
-### 4. 첫 대화 최종 컨펌 (5턴 완료 후)
-
+**대화 저장/취소 (5턴 완료 후)**:
 ```http
-POST /scenario/{scenario_id}/first-conversation/confirm
+POST /scenario/{scenario_id}/chat?creator_id={user_id}
 Content-Type: application/json
 
 {
-  "conversation_id": "conv_123",
-  "action": "save"  // 또는 "cancel"
+  "action": "save",  // 또는 "cancel"
+  "conversation_id": "conv_123"
 }
 ```
 
-**응답**:
+**저장 응답**:
 ```json
 {
-  "success": true,
-  "message": "대화가 시나리오에 저장되었습니다.",
-  "scenario_id": "scenario_123"
+  "scenario_id": "scenario_123",
+  "status": "saved",
+  "first_conversation": {...},
+  "message": "첫 대화가 시나리오에 저장되었습니다."
 }
 ```
 
@@ -318,12 +338,15 @@ GET /scenario/{scenario_id}
 
 ### 7. 시나리오 Fork
 
+시나리오 Fork는 시나리오 복사만 처리하며, 대화는 별도 엔드포인트에서 시작합니다:
+
 ```http
 POST /scenario/{scenario_id}/fork
 Content-Type: application/json
 
 {
-  "initial_message": "안녕하세요!"
+  "conversation_partner_type": "stranger",  // 필수: "stranger" 또는 "other_main_character"
+  "other_main_character": null  // conversation_partner_type이 "other_main_character"일 때 필수
 }
 ```
 
@@ -332,35 +355,56 @@ Content-Type: application/json
 {
   "forked_scenario_id": "forked_scenario_456",
   "original_scenario_id": "scenario_123",
-  "response": "안녕하세요...",
-  "conversation_id": "conv_456",
-  "turn_count": 1,
-  "max_turns": 5,
-  "is_temporary": true
+  "message": "시나리오를 fork했습니다. 대화를 시작하려면 /scenario/fork/{forked_scenario_id}/chat 엔드포인트를 사용하세요."
 }
 ```
 
-### 8. Fork된 시나리오 대화 계속
+**참고**: 
+- `conversation_partner_type`이 원본과 같으면 기존 대화 맥락(`reference_first_conversation`) 저장
+- `conversation_partner_type`이 원본과 다르면 What If 설정만 저장
+
+### 8. Fork된 시나리오 대화 (통합 엔드포인트)
+
+Fork된 시나리오 대화도 하나의 통합 엔드포인트로 처리됩니다:
 
 ```http
-POST /scenario/{scenario_id}/fork/{forked_scenario_id}/continue
+POST /scenario/fork/{forked_scenario_id}/chat?user_id={user_id}
 Content-Type: application/json
 
 {
-  "conversation_id": "conv_456",
-  "message": "다음 질문..."
+  "message": "안녕하세요!",
+  "conversation_id": null  // 첫 대화 시작 시 null, 이어서 대화 시 기존 ID
 }
 ```
 
-### 9. Fork된 시나리오 대화 컨펌
+**동작 방식**:
+- `action`이 없고 `conversation_id`가 없으면: 첫 대화 시작
+- `action`이 없고 `conversation_id`가 있으면: 대화 이어가기 (최대 5턴)
+- `action`이 있으면: 저장/취소 처리 (5턴 완료 후)
 
+**참고**: 
+- `conversation_partner_type`과 `other_main_character`는 Fork 시 저장된 값을 자동으로 사용
+- 요청에서 받지 않음
+
+**대화 이어가기**:
 ```http
-POST /scenario/{scenario_id}/fork/{forked_scenario_id}/confirm-conversation
+POST /scenario/fork/{forked_scenario_id}/chat?user_id={user_id}
 Content-Type: application/json
 
 {
-  "conversation_id": "conv_456",
-  "action": "save"  // 또는 "cancel"
+  "message": "다음 질문...",
+  "conversation_id": "conv_456"
+}
+```
+
+**대화 저장/취소 (5턴 완료 후)**:
+```http
+POST /scenario/fork/{forked_scenario_id}/chat?user_id={user_id}
+Content-Type: application/json
+
+{
+  "action": "save",  // 또는 "cancel"
+  "conversation_id": "conv_456"
 }
 ```
 
@@ -518,13 +562,17 @@ ScenarioChatService (BaseChatService 상속)
 
 ### 4. What If 시나리오 시스템
 - **시나리오 생성**: 캐릭터 속성, 사건, 배경 변경을 통한 대체 타임라인 생성
-- **첫 대화**: 시나리오에 맞춘 캐릭터와의 대화 (최대 5턴)
+- **통합 대화 API**: 하나의 엔드포인트로 첫 대화, 이어가기, 저장/취소 처리
 - **시나리오 Fork**: 다른 사용자의 시나리오를 기반으로 새로운 대화 시작
+  - Fork 시 `conversation_partner_type` 선택 필수
+  - 원본과 같은 `conversation_partner_type`이면 기존 대화 맥락 저장
+  - 원본과 다른 `conversation_partner_type`이면 What If 설정만 저장
 - **공개 시나리오**: 커뮤니티와 시나리오 공유 및 탐색
 - **대화 상대 선택**: 제3의 인물 또는 같은 책의 다른 주인공과 대화 선택 가능
-  - **제3의 인물**: 캐릭터가 처음 보는 완전한 낯선 사람으로 인식
-  - **다른 주인공**: 같은 책의 다른 주인공으로 인식 (예: Victor Frankenstein 선택 시 The Creature와 대화)
-  - 대화 시작 전에만 선택 가능, 대화 중에는 수정 불가
+  - **제3의 인물 (stranger)**: 캐릭터가 처음 보는 완전한 낯선 사람으로 인식
+  - **다른 주인공 (other_main_character)**: 같은 책의 다른 주인공으로 인식 (예: Romeo 선택 시 Juliet과 대화)
+  - 원본 시나리오: 대화 시작 시 선택 가능
+  - Fork된 시나리오: Fork 시 선택하며, 대화 중에는 변경 불가
 
 ### 5. 서비스 아키텍처 최적화
 - **BaseChatService**: 공통 API 호출 로직을 상속으로 재사용
@@ -574,59 +622,75 @@ import requests
 
 # 1. 시나리오 생성
 scenario_request = {
-    "scenario_name": "헤르미온이가 슬리데린에 배정되었다면?",
-    "book_title": "Pride and Prejudice",
-    "character_name": "Elizabeth Bennet",
-    "is_public": False,
+    "scenario_name": "셜록홈즈가 현대사회에서 활동한다면?",
+    "book_title": "The Adventures of Sherlock Holmes",
+    "character_name": "Sherlock Holmes",
+    "is_public": True,
     "character_property_changes": {
         "enabled": True,
-        "description": "그리핀도르 대신 슬리데린에 배정되고, 야망이 더 강해짐"
+        "description": "이성적이고 논리적인 추리를 중시하지만 사람의 감정 역시 추리에 중요한 요소라고 생각한다."
+    },
+    "event_alterations": {
+        "enabled": False
+    },
+    "setting_modifications": {
+        "enabled": True,
+        "description": "2025년 한국 현대사회를 배경으로 최신 과학기술들을 사용한다."
     }
 }
 
 response = requests.post(
-    "http://localhost:8000/scenario/create",
+    "http://localhost:8000/scenario/create?creator_id=default_user",
     json=scenario_request
 )
 scenario = response.json()
 scenario_id = scenario['scenario_id']
 print(f"시나리오 생성: {scenario_id}")
 
-# 2. 첫 대화 시작
+# 2. 첫 대화 시작 (다른 주인공과 대화)
 conversation_request = {
-    "initial_message": "안녕하세요!",
-    "conversation_id": None
+    "message": "안녕하세요? 제가 누군지 아시나요?",
+    "conversation_id": None,
+    "conversation_partner_type": "other_main_character",
+    "other_main_character": {
+        "character_name": "Dr. Watson",
+        "book_title": "The Adventures of Sherlock Holmes"
+    }
 }
 
 response = requests.post(
-    f"http://localhost:8000/scenario/{scenario_id}/first-conversation",
+    f"http://localhost:8000/scenario/{scenario_id}/chat?creator_id=default_user",
     json=conversation_request
 )
 result = response.json()
 print(f"응답: {result['response']}")
 print(f"턴: {result['turn_count']}/{result['max_turns']}")
+conversation_id = result['conversation_id']
 
 # 3. 대화 계속 (턴 2~5)
 continue_request = {
-    "conversation_id": result['conversation_id'],
-    "message": "슬리데린에 배정된 후 어떤 변화가 있었나요?"
+    "message": "농담이었어, 셜록. 최근 해결한 사건 중에 내가 기록할만한 흥미로운 사건이 있을까?",
+    "conversation_id": conversation_id
 }
 
 response = requests.post(
-    f"http://localhost:8000/scenario/{scenario_id}/first-conversation/continue",
+    f"http://localhost:8000/scenario/{scenario_id}/chat?creator_id=default_user",
     json=continue_request
 )
 result = response.json()
 print(f"응답: {result['response']}")
+print(f"턴: {result['turn_count']}/{result['max_turns']}")
+
+# ... (턴 3, 4, 5 계속)
 
 # 4. 대화 저장 (5턴 완료 후)
 confirm_request = {
-    "conversation_id": result['conversation_id'],
-    "action": "save"
+    "action": "save",
+    "conversation_id": conversation_id
 }
 
 response = requests.post(
-    f"http://localhost:8000/scenario/{scenario_id}/first-conversation/confirm",
+    f"http://localhost:8000/scenario/{scenario_id}/chat?creator_id=default_user",
     json=confirm_request
 )
 print(response.json()['message'])
@@ -639,9 +703,13 @@ response = requests.get(
 scenarios = response.json()['scenarios']
 print(f"\n공개 시나리오: {len(scenarios)}개")
 
-# 6. 시나리오 Fork
+# 6. 시나리오 Fork (원본과 같은 대화 상대 선택)
 fork_request = {
-    "initial_message": "안녕하세요!"
+    "conversation_partner_type": "other_main_character",
+    "other_main_character": {
+        "character_name": "Dr. Watson",
+        "book_title": "The Adventures of Sherlock Holmes"
+    }
 }
 
 response = requests.post(
@@ -649,7 +717,21 @@ response = requests.post(
     json=fork_request
 )
 forked = response.json()
-print(f"Fork된 시나리오 ID: {forked['forked_scenario_id']}")
+forked_scenario_id = forked['forked_scenario_id']
+print(f"Fork된 시나리오 ID: {forked_scenario_id}")
+
+# 7. Fork된 시나리오 대화 시작 (conversation_partner_type은 Fork 시 저장된 값 사용)
+forked_chat_request = {
+    "message": "안녕하세요? 제가 누군지 아시나요?"
+}
+
+response = requests.post(
+    f"http://localhost:8000/scenario/fork/{forked_scenario_id}/chat?user_id=default_user",
+    json=forked_chat_request
+)
+result = response.json()
+print(f"응답: {result['response']}")
+print(f"턴: {result['turn_count']}/{result['max_turns']}")
 ```
 
 ### cURL
@@ -668,16 +750,35 @@ curl -X POST http://localhost:8000/character/chat \
   }'
 
 # 시나리오 생성
-curl -X POST http://localhost:8000/scenario/create \
+curl -X POST "http://localhost:8000/scenario/create?creator_id=default_user" \
   -H "Content-Type: application/json" \
   -d '{
-    "scenario_name": "헤르미온이가 슬리데린에 배정되었다면?",
-    "book_title": "Pride and Prejudice",
-    "character_name": "Elizabeth Bennet",
-    "is_public": false,
+    "scenario_name": "셜록홈즈가 현대사회에서 활동한다면?",
+    "book_title": "The Adventures of Sherlock Holmes",
+    "character_name": "Sherlock Holmes",
+    "is_public": true,
     "character_property_changes": {
       "enabled": true,
-      "description": "그리핀도르 대신 슬리데린에 배정되고, 야망이 더 강해짐"
+      "description": "이성적이고 논리적인 추리를 중시하지만 사람의 감정 역시 추리에 중요한 요소라고 생각한다."
+    },
+    "event_alterations": {
+      "enabled": false
+    },
+    "setting_modifications": {
+      "enabled": true,
+      "description": "2025년 한국 현대사회를 배경으로 최신 과학기술들을 사용한다."
+    }
+  }'
+
+# 시나리오 대화 시작
+curl -X POST "http://localhost:8000/scenario/{scenario_id}/chat?creator_id=default_user" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "안녕하세요? 제가 누군지 아시나요?",
+    "conversation_partner_type": "other_main_character",
+    "other_main_character": {
+      "character_name": "Dr. Watson",
+      "book_title": "The Adventures of Sherlock Holmes"
     }
   }'
 
@@ -685,10 +786,17 @@ curl -X POST http://localhost:8000/scenario/create \
 curl "http://localhost:8000/scenario/public?sort=popular"
 
 # 시나리오 Fork
-curl -X POST http://localhost:8000/scenario/{scenario_id}/fork \
+curl -X POST "http://localhost:8000/scenario/{scenario_id}/fork" \
   -H "Content-Type: application/json" \
   -d '{
-    "initial_message": "안녕하세요!"
+    "conversation_partner_type": "stranger"
+  }'
+
+# Fork된 시나리오 대화
+curl -X POST "http://localhost:8000/scenario/fork/{forked_scenario_id}/chat?user_id=default_user" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "안녕하세요!"
   }'
 ```
 

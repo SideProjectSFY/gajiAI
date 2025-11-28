@@ -46,7 +46,7 @@ async def root():
             "chat": "/character/chat",
             "health": "/character/health",
             "scenario_create": "/scenario/create",
-            "scenario_first_conversation": "/scenario/{scenario_id}/first-conversation",
+            "scenario_chat": "/scenario/{scenario_id}/chat",
             "scenario_public": "/scenario/public",
             "scenario_detail": "/scenario/{scenario_id}",
             "scenario_fork": "/scenario/{scenario_id}/fork"

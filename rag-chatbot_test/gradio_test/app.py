@@ -370,15 +370,22 @@ def start_first_conversation(message, scenario_id, history, session_state):
             # 대화 기록에 사용자 메시지 추가
             history = history + [{"role": "user", "content": message}]
             
-            # 기본 모드: 일반 응답
+            # 기본 모드: conversation_id 사용하여 연속 대화
             result = character_service.chat(
                 character_name=character_name,
                 book_title=book_title,
                 user_message=message,
                 output_language=output_language,
+                conversation_id=session_state.get('conversation_id'),
                 conversation_partner_type=conversation_partner_type,
                 other_main_character=other_main_character
             )
+            
+            # conversation_id와 turn_count 업데이트
+            if 'conversation_id' in result:
+                session_state['conversation_id'] = result['conversation_id']
+            if 'turn_count' in result:
+                session_state['turn_count'] = result['turn_count']
             
             if 'error' in result:
                 error_msg = f"❌ {result['error']}"
@@ -463,12 +470,14 @@ def start_first_conversation(message, scenario_id, history, session_state):
                     # 다른 주인공이 없으면 제3의 인물로 변경
                     conversation_partner_type = 'stranger'
         
+        # 통합 엔드포인트: conversation_id가 있으면 이어가기, 없으면 첫 대화
         result = scenario_chat_service.first_conversation(
             scenario_id=scenario_id,
             initial_message=message,
             output_language=output_language,
             is_creator=True,
             conversation_id=session_state.get('conversation_id'),
+            reference_first_conversation=None,  # 원본 시나리오이므로 None
             conversation_partner_type=conversation_partner_type,
             other_main_character=other_main_character
         )
@@ -562,16 +571,22 @@ def continue_conversation(message, scenario_id, conversation_id, history, sessio
                     # 다른 주인공이 없으면 제3의 인물로 변경
                     conversation_partner_type = 'stranger'
             
-            # 기본 모드: 일반 응답
+            # 기본 모드: conversation_id 사용하여 연속 대화
             result = character_service.chat(
                 character_name=character_name,
                 book_title=book_title,
                 user_message=message,
-                conversation_history=history[:-1],  # 현재 메시지 제외
                 output_language=output_language,
+                conversation_id=conversation_id,
                 conversation_partner_type=conversation_partner_type,
                 other_main_character=other_main_character
             )
+            
+            # conversation_id와 turn_count 업데이트
+            if 'conversation_id' in result:
+                session_state['conversation_id'] = result['conversation_id']
+            if 'turn_count' in result:
+                session_state['turn_count'] = result['turn_count']
             
             if 'error' in result:
                 error_msg = f"❌ {result['error']}"
@@ -658,12 +673,14 @@ def continue_conversation(message, scenario_id, conversation_id, history, sessio
                     # 다른 주인공이 없으면 제3의 인물로 변경
                     conversation_partner_type = 'stranger'
         
+        # 통합 엔드포인트: conversation_id가 있으면 이어가기
         result = scenario_chat_service.first_conversation(
             scenario_id=scenario_id,
             initial_message=message,
             output_language=output_language,
             is_creator=True,
             conversation_id=conversation_id,
+            reference_first_conversation=None,  # 원본 시나리오이므로 None
             conversation_partner_type=conversation_partner_type,
             other_main_character=other_main_character
         )
@@ -723,11 +740,14 @@ def continue_conversation(message, scenario_id, conversation_id, history, sessio
 
 
 def confirm_conversation(scenario_id, conversation_id, action, session_state):
-    """대화 최종 확인"""
+    """대화 최종 확인 (통합 엔드포인트 사용)"""
     if not scenario_chat_service or not scenario_id or not conversation_id:
         return "❌ 시나리오와 대화를 먼저 생성해주세요.", session_state
     
     try:
+        # 통합 엔드포인트: action을 사용하여 저장/취소 처리
+        # action="save" 또는 "cancel"로 first_conversation을 호출하면 자동으로 처리됨
+        # 하지만 서비스 레이어에서는 confirm_first_conversation을 별도로 호출해야 함
         result = scenario_chat_service.confirm_first_conversation(
             scenario_id=scenario_id,
             conversation_id=conversation_id,
@@ -753,6 +773,7 @@ def confirm_conversation(scenario_id, conversation_id, action, session_state):
             return "❌ 대화가 취소되었습니다.", session_state
     
     except Exception as e:
+        logger.error(f"대화 확인 실패: {str(e)}", exc_info=True)
         return f"❌ 확인 실패: {str(e)}", session_state
 
 
@@ -855,7 +876,7 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
                         value=False,
                         info="다른 사용자들이 볼 수 있게 공개"
                     )
-                    
+                
                     gr.Markdown("### 🔀 What If 변경사항")
                     
                     gr.Markdown("#### 1. 캐릭터 속성 변경")
@@ -884,7 +905,7 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
                         ⚠️ **주의**: 변경사항을 아무것도 입력하지 않으면 원본 캐릭터와 대화하게 됩니다.
                         """,
                         elem_classes=["warning-text"]
-                    )
+                        )
                     
                     create_scenario_btn = gr.Button("✨ 시나리오 생성", variant="primary", size="lg")
             
@@ -1137,12 +1158,12 @@ if __name__ == "__main__":
         try:
             demo.launch(
                 server_name="localhost",
-                server_port=7860,
-                share=False,
-                show_error=True,
-                quiet=False,
-                theme=gr.themes.Soft()
-            )
+        server_port=7860,
+        share=False,
+        show_error=True,
+        quiet=False,
+        theme=gr.themes.Soft()
+    )
         except Exception as launch_error:
             logger.error(f"Gradio 앱 실행 실패: {str(launch_error)}", exc_info=True)
             raise

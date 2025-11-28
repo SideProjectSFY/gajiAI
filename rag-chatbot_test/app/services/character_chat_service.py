@@ -4,7 +4,12 @@
 Gemini File Search를 활용하여 책 속 인물과 대화합니다.
 """
 
+import json
+import uuid
+import threading
+from pathlib import Path
 from typing import List, Dict, Optional
+from datetime import datetime, timedelta
 from app.services.base_chat_service import BaseChatService
 from app.services.character_data_loader import CharacterDataLoader
 
@@ -23,6 +28,23 @@ class CharacterChatService(BaseChatService):
         
         # 캐릭터 정보 로드
         self.characters = CharacterDataLoader.load_characters()
+        
+        # 프로젝트 루트 경로
+        current_file = Path(__file__)
+        self.project_root = current_file.parent.parent.parent
+        
+        # 임시 대화 저장 디렉토리 (파일 기반) - 시나리오 대화와 동일한 위치
+        self.temp_conversations_dir = self.project_root / "data" / "scenarios" / "temp_conversations"
+        self.temp_conversations_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Thread-safe를 위한 Lock
+        self._conversations_lock = threading.Lock()
+        
+        # TTL 설정: 1시간 후 자동 삭제
+        self.conversation_ttl = timedelta(hours=1)
+        
+        # 최대 턴 수
+        self.max_turns = 5
     
     def get_available_characters(self) -> List[Dict]:
         """사용 가능한 캐릭터 목록 반환"""
@@ -148,20 +170,22 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
         output_language: str = "ko",
         system_instruction: Optional[str] = None,
         conversation_partner_type: str = "stranger",
-        other_main_character: Optional[Dict] = None
+        other_main_character: Optional[Dict] = None,
+        conversation_id: Optional[str] = None
     ) -> Dict:
         """
-        캐릭터와 대화
+        캐릭터와 대화 (임시 대화 저장 지원)
         
         Args:
             character_name: 대화할 캐릭터 이름
             user_message: 사용자 메시지
-            conversation_history: 이전 대화 기록 (선택)
+            conversation_history: 이전 대화 기록 (선택, conversation_id가 있으면 무시됨)
             book_title: 책 제목 (선택, 같은 책의 여러 캐릭터 구분용)
             output_language: 출력 언어 (기본값: "ko", 지원: "ko", "en", "ja", "zh" 등)
+            conversation_id: 임시 대화 ID (이어서 대화할 때 사용)
         
         Returns:
-            응답 딕셔너리 (response, character_info, grounding_metadata)
+            응답 딕셔너리 (response, character_info, grounding_metadata, conversation_id, turn_count, max_turns)
         """
         # 캐릭터 정보 가져오기
         character = self.get_character_info(character_name, book_title)
@@ -183,11 +207,77 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
                 other_main_character
             )
         
-        # 대화 기록 포함
+        # 오래된 임시 대화 정리 (TTL 체크)
+        self._cleanup_expired_conversations()
+        
+        # 임시 대화 로드 또는 새로 생성
+        with self._conversations_lock:
+            if conversation_id:
+                # 파일에서 임시 대화 로드
+                temp_conv_file = self.temp_conversations_dir / f"{conversation_id}.json"
+                if not temp_conv_file.exists():
+                    return {
+                        'error': f"임시 대화를 찾을 수 없습니다: {conversation_id}",
+                        'character_name': character['character_name']
+                    }
+                
+                with open(temp_conv_file, 'r', encoding='utf-8') as f:
+                    temp_conv = json.load(f)
+                
+                # 캐릭터 일치 확인
+                if temp_conv.get('character_name') != character_name or temp_conv.get('book_title') != book_title:
+                    return {
+                        'error': f"임시 대화의 캐릭터와 일치하지 않습니다. (대화: {temp_conv.get('character_name')}, 요청: {character_name})",
+                        'character_name': character['character_name']
+                    }
+                
+                # TTL 체크
+                created_at_str = temp_conv.get("created_at", "")
+                if created_at_str:
+                    created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                    created_at_utc = created_at.replace(tzinfo=None)
+                    if datetime.utcnow() - created_at_utc > self.conversation_ttl:
+                        temp_conv_file.unlink()  # 파일 삭제
+                        return {
+                            'error': f"임시 대화가 만료되었습니다: {conversation_id}",
+                            'character_name': character['character_name']
+                        }
+                
+                messages = temp_conv.get("messages", [])
+                turn_count = temp_conv.get("turn_count", 0)
+            else:
+                conversation_id = str(uuid.uuid4())
+                messages = []
+                turn_count = 0
+        
+        # 턴 수 체크
+        if turn_count >= self.max_turns:
+            return {
+                'error': f"최대 턴 수({self.max_turns})에 도달했습니다. 새로운 대화를 시작해주세요.",
+                'character_name': character['character_name'],
+                'conversation_id': conversation_id,
+                'turn_count': turn_count,
+                'max_turns': self.max_turns
+            }
+        
+        # 대화 기록 준비 (임시 대화가 있으면 사용, 없으면 conversation_history 사용)
         contents = []
-        if conversation_history:
-            for msg in conversation_history[-5:]:  # 최근 5개만
-                # 빈 딕셔너리나 잘못된 형식 필터링
+        if messages:
+            # 임시 대화에서 메시지 로드
+            for msg in messages[-10:]:  # 최근 10개 메시지만 사용
+                role = msg.get("role")
+                if role == "assistant":
+                    role = "model"
+                elif role not in ["user", "model"]:
+                    continue
+                
+                contents.append({
+                    "role": role,
+                    "parts": [{"text": msg.get("content", "")}]
+                })
+        elif conversation_history:
+            # conversation_history 사용 (레거시 지원)
+            for msg in conversation_history[-5:]:
                 if isinstance(msg, dict) and msg.get('role') and msg.get('parts'):
                     contents.append(msg)
         
@@ -211,23 +301,99 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
             # 응답 추출
             result = self._extract_response(response)
             
-            return {
-                'response': result['response'],
-                'character_name': character['character_name'],
-                'book_title': character['book_title'],
-                'output_language': output_language,
-                'grounding_metadata': result['grounding_metadata']
-            }
         except ValueError as e:
-            # Store 관련 에러
             return {
                 'error': str(e),
                 'character_name': character['character_name']
             }
         except Exception as e:
-            # 기타 에러
             return {
                 'error': f"응답 생성 실패: {str(e)}",
                 'character_name': character['character_name']
             }
+        
+        # 응답 메시지 추가
+        messages.append({
+            "role": "user",
+            "content": user_message,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "turn": turn_count + 1
+        })
+        messages.append({
+            "role": "assistant",
+            "content": result["response"],
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "turn": turn_count + 1
+        })
+        
+        turn_count += 1
+        
+        # other_main_character 최소 정보만 저장 (character_name, book_title만)
+        other_main_character_minimal = None
+        if other_main_character:
+            other_main_character_minimal = {
+                "character_name": other_main_character.get("character_name"),
+                "book_title": other_main_character.get("book_title")
+            }
+        
+        # 임시 저장 (파일 기반, Thread-safe)
+        temp_conv_data = {
+            "character_name": character['character_name'],
+            "book_title": character['book_title'],
+            "messages": messages,
+            "turn_count": turn_count,
+            "conversation_partner_type": conversation_partner_type,
+            "other_main_character": other_main_character_minimal,
+            "created_at": datetime.utcnow().isoformat() + "Z"
+        }
+        
+        with self._conversations_lock:
+            temp_conv_file = self.temp_conversations_dir / f"{conversation_id}.json"
+            with open(temp_conv_file, 'w', encoding='utf-8') as f:
+                json.dump(temp_conv_data, f, ensure_ascii=False, indent=2)
+        
+        return {
+            'response': result['response'],
+            'character_name': character['character_name'],
+            'book_title': character['book_title'],
+            'output_language': output_language,
+            'grounding_metadata': result.get('grounding_metadata'),
+            'conversation_id': conversation_id,
+            'turn_count': turn_count,
+            'max_turns': self.max_turns
+        }
+    
+    def _cleanup_expired_conversations(self):
+        """
+        만료된 임시 대화 파일 정리 (TTL 체크)
+        Thread-safe하게 실행됨
+        """
+        now = datetime.utcnow()
+        expired_files = []
+        
+        with self._conversations_lock:
+            # 모든 임시 대화 파일 확인
+            for conv_file in self.temp_conversations_dir.glob("*.json"):
+                try:
+                    with open(conv_file, 'r', encoding='utf-8') as f:
+                        conv_data = json.load(f)
+                    
+                    created_at_str = conv_data.get("created_at", "")
+                    if created_at_str:
+                        # ISO 형식 파싱 (Z 제거 후 UTC로 처리)
+                        created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                        created_at_utc = created_at.replace(tzinfo=None)
+                        
+                        if now - created_at_utc > self.conversation_ttl:
+                            expired_files.append(conv_file)
+                except (json.JSONDecodeError, ValueError, KeyError):
+                    # 잘못된 파일은 삭제
+                    expired_files.append(conv_file)
+            
+            # 만료된 파일 삭제
+            for file_path in expired_files:
+                try:
+                    file_path.unlink()
+                except Exception:
+                    pass  # 삭제 실패는 무시
     

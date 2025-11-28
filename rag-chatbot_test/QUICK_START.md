@@ -114,7 +114,35 @@ Content-Type: application/json
 {
   "character_name": "Romeo Montague",
   "message": "줄리엣에 대해 어떻게 생각해?",
-  "conversation_history": []  // 선택사항
+  "conversation_history": [],  // 선택사항 (레거시 호환)
+  "conversation_id": null,  // 이어서 대화 시 기존 ID (5턴 연속 대화 지원)
+  "conversation_partner_type": "stranger",  // "stranger" 또는 "other_main_character"
+  "other_main_character": null  // conversation_partner_type이 "other_main_character"일 때 필수
+}
+```
+
+**응답**:
+```json
+{
+  "response": "...",
+  "character_name": "Romeo Montague",
+  "book_title": "Romeo and Juliet",
+  "conversation_id": "conv_123",  // 임시 대화 ID
+  "turn_count": 1,
+  "max_turns": 5,
+  "grounding_metadata": {...}
+}
+```
+
+**대화 이어가기**:
+```http
+POST /character/chat
+Content-Type: application/json
+
+{
+  "character_name": "Romeo Montague",
+  "message": "다음 질문...",
+  "conversation_id": "conv_123"  // 이전 응답의 conversation_id 사용
 }
 ```
 

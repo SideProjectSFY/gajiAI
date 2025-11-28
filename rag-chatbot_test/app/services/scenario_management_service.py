@@ -776,13 +776,21 @@ Use File Search to find relevant information from the source material, then outp
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(scenario, f, ensure_ascii=False, indent=2)
     
-    def fork_scenario(self, scenario_id: str, user_id: str) -> Dict:
+    def fork_scenario(
+        self, 
+        scenario_id: str, 
+        user_id: str,
+        conversation_partner_type: str = "stranger",
+        other_main_character: Optional[Dict] = None
+    ) -> Dict:
         """
         시나리오 Fork
         
         Args:
             scenario_id: 원본 시나리오 ID
             user_id: Fork하는 사용자 ID
+            conversation_partner_type: 대화 상대 유형
+            other_main_character: 다른 주인공 정보
         
         Returns:
             Fork된 시나리오 정보
@@ -804,6 +812,39 @@ Use File Search to find relevant information from the source material, then outp
         # Fork된 시나리오 생성
         forked_scenario_id = str(uuid.uuid4())
         
+        # other_main_character 최소 정보만 저장
+        other_main_character_minimal = None
+        if other_main_character:
+            other_main_character_minimal = {
+                "character_name": other_main_character.get("character_name"),
+                "book_title": other_main_character.get("book_title")
+            }
+        
+        # 원본 시나리오의 first_conversation 가져오기
+        original_first_conv = original_scenario.get("first_conversation")
+        
+        # conversation_partner_type이 원본과 같은지 확인
+        # 같으면 reference_first_conversation 저장, 다르면 None (대화 맥락이 의미 없음)
+        reference_first_conversation = None
+        if original_first_conv:
+            original_partner_type = original_first_conv.get("conversation_partner_type", "stranger")
+            
+            # conversation_partner_type이 같으면 기존 대화 맥락 사용 가능
+            if conversation_partner_type == original_partner_type:
+                # other_main_character도 비교 (other_main_character인 경우)
+                if conversation_partner_type == "other_main_character":
+                    original_other = original_first_conv.get("other_main_character")
+                    if original_other and other_main_character_minimal:
+                        # character_name과 book_title 비교
+                        if (original_other.get("character_name") == other_main_character_minimal.get("character_name") and
+                            original_other.get("book_title") == other_main_character_minimal.get("book_title")):
+                            reference_first_conversation = original_first_conv
+                    elif original_other == other_main_character_minimal:  # 둘 다 None이거나 동일
+                        reference_first_conversation = original_first_conv
+                else:
+                    # stranger인 경우 타입만 같으면 됨
+                    reference_first_conversation = original_first_conv
+        
         forked_scenario = {
             "forked_scenario_id": forked_scenario_id,
             "original_scenario_id": scenario_id,
@@ -818,9 +859,15 @@ Use File Search to find relevant information from the source material, then outp
             "character_property_changes": original_scenario["character_property_changes"],
             "event_alterations": original_scenario["event_alterations"],
             "setting_modifications": original_scenario["setting_modifications"],
-            "reference_first_conversation": original_scenario.get("first_conversation"),  # 원본 first_conversation 전체 저장
+            "reference_first_conversation": reference_first_conversation,  # conversation_partner_type이 같을 때만 저장
             "conversations": []
         }
+        
+        # reference_first_conversation이 없을 때만 최상위 레벨에 저장 (중복 방지)
+        # reference_first_conversation이 있으면 그 안에 이미 conversation_partner_type과 other_main_character가 있음
+        if not reference_first_conversation:
+            forked_scenario["conversation_partner_type"] = conversation_partner_type
+            forked_scenario["other_main_character"] = other_main_character_minimal
         
         # Fork된 시나리오 저장
         user_forked_dir.mkdir(parents=True, exist_ok=True)

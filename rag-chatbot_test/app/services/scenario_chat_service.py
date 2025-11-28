@@ -47,7 +47,7 @@ class ScenarioChatService(BaseChatService):
         scenario: Dict,
         output_language: str = "ko",
         is_forked: bool = False,
-        original_first_conversation: Optional[Dict] = None,
+        reference_first_conversation: Optional[Dict] = None,
         conversation_partner_type: str = "stranger",
         other_main_character: Optional[Dict] = None
     ) -> str:
@@ -128,7 +128,7 @@ Maintain the scenario's alternate timeline while having your own unique conversa
 """
             
             # 원본 생성자의 첫 대화 참조 (말투, 스타일, 인명 표기 등 일관성 유지)
-            if original_first_conversation and original_first_conversation.get("messages"):
+            if reference_first_conversation and reference_first_conversation.get("messages"):
                 prompt += """
 【Reference: Original Creator's First Conversation】
 The original creator of this scenario had the following conversation. Use this as a reference for:
@@ -140,7 +140,7 @@ The original creator of this scenario had the following conversation. Use this a
 Original conversation:
 """
                 # 원본 first_conversation의 모든 메시지 포함 (최대 5턴 = 10개 메시지)
-                for msg in original_first_conversation["messages"][:10]:
+                for msg in reference_first_conversation["messages"][:10]:
                     role = "User" if msg.get("role") == "user" else "Character"
                     prompt += f"{role}: {msg.get('content', '')}\n"
                 
@@ -279,7 +279,7 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
         output_language: str = "ko",
         is_creator: bool = True,
         conversation_id: Optional[str] = None,
-        original_first_conversation: Optional[Dict] = None,
+        reference_first_conversation: Optional[Dict] = None,
         conversation_partner_type: str = "stranger",
         other_main_character: Optional[Dict] = None
     ) -> Dict:
@@ -312,18 +312,18 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
         
         # 시나리오 적용 프롬프트 생성
         # is_creator가 False면 Fork된 시나리오이므로 원본 first_conversation 참조
-        # original_first_conversation이 전달되지 않은 경우에만 forked_scenario에서 가져오기 시도
-        if not is_creator and not original_first_conversation:
+        # reference_first_conversation이 전달되지 않은 경우에만 forked_scenario에서 가져오기 시도
+        if not is_creator and not reference_first_conversation:
             # Fork된 시나리오인 경우, 원본 시나리오의 first_conversation을 직접 가져오기
             # (fork_scenario 엔드포인트에서 이미 전달하므로 이 부분은 fallback)
-            original_first_conversation = scenario.get("first_conversation")
+            reference_first_conversation = scenario.get("first_conversation")
         
         system_instruction = self.create_scenario_prompt(
             character,
             scenario,
             output_language,
             is_forked=not is_creator,
-            original_first_conversation=original_first_conversation,
+            reference_first_conversation=reference_first_conversation,
             conversation_partner_type=conversation_partner_type,
             other_main_character=other_main_character
         )
@@ -414,12 +414,22 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
         
         turn_count += 1
         
+        # other_main_character 최소 정보만 저장 (character_name, book_title만)
+        other_main_character_minimal = None
+        if other_main_character:
+            other_main_character_minimal = {
+                "character_name": other_main_character.get("character_name"),
+                "book_title": other_main_character.get("book_title")
+            }
+        
         # 임시 저장 (파일 기반, Thread-safe)
         temp_conv_data = {
             "scenario_id": scenario_id,
             "messages": messages,
             "turn_count": turn_count,
             "is_creator": is_creator,
+            "conversation_partner_type": conversation_partner_type,
+            "other_main_character": other_main_character_minimal,
             "created_at": datetime.utcnow().isoformat() + "Z"  # TTL 관리를 위한 생성 시간
         }
         
@@ -477,6 +487,8 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
                 "is_complete": True,
                 "turn_count": temp_conv["turn_count"],
                 "messages": temp_conv["messages"],
+                "conversation_partner_type": temp_conv.get("conversation_partner_type", "stranger"),
+                "other_main_character": temp_conv.get("other_main_character"),
                 "created_at": temp_conv["messages"][0]["timestamp"] if temp_conv["messages"] else datetime.utcnow().isoformat() + "Z",
                 "completed_at": datetime.utcnow().isoformat() + "Z"
             }
@@ -516,7 +528,9 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
         is_forked: bool = False,
         forked_scenario_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
-        user_id: Optional[str] = None
+        user_id: Optional[str] = None,
+        conversation_partner_type: str = "stranger",
+        other_main_character: Optional[Dict] = None
     ) -> Dict:
         """
         시나리오 기반 대화
@@ -580,7 +594,9 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
             scenario,
             output_language,
             is_forked=is_forked,
-            original_first_conversation=original_scenario.get("first_conversation") if original_scenario else None
+            reference_first_conversation=original_scenario.get("first_conversation") if original_scenario else None,
+            conversation_partner_type=conversation_partner_type,
+            other_main_character=other_main_character
         )
         
         # 대화 기록 준비

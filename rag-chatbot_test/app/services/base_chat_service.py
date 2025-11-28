@@ -204,6 +204,9 @@ class BaseChatService:
         if not response_text:
             response_text = str(response) if hasattr(response, '__str__') else "응답을 가져올 수 없습니다."
         
+        # 응답 텍스트 정리: 중복 제거 및 메타데이터 제거
+        response_text = self._clean_response_text(response_text)
+        
         # Grounding 메타데이터 추출 (인용 정보)
         grounding_metadata = None
         if hasattr(response, 'candidates') and len(response.candidates) > 0:
@@ -223,4 +226,105 @@ class BaseChatService:
             'response': response_text,
             'grounding_metadata': grounding_metadata
         }
+    
+    def _clean_response_text(self, text: str) -> str:
+        """
+        응답 텍스트 정리: 중복 제거 및 메타데이터 제거
+        
+        Args:
+            text: 원본 응답 텍스트
+        
+        Returns:
+            정리된 응답 텍스트
+        """
+        if not text:
+            return text
+        
+        import re
+        
+        # 1. 메타데이터 블록 제거
+        # 패턴: "The Creature, a main character from..." 같은 설명 블록
+        # 또는 "Victor Frankenstein successfully animates..." 같은 시나리오 설명
+        # 또는 "The story's setting has been modified: location: Changed from..." 같은 설정 설명
+        
+        # 메타데이터 패턴 (더 포괄적으로)
+        metadata_patterns = [
+            r'[A-Z][a-z]+ [A-Z][a-z]+,?\s*a main character from',  # "The Creature, a main character from"
+            r'[A-Z][a-z]+ [A-Z][a-z]+ successfully',  # "Victor Frankenstein successfully"
+            r'setting has been modified',
+            r'Changed from\s*"[^"]+"\s*to\s*"[^"]+"',
+            r'location:\s*Changed from',
+            r'would likely remain',
+            r'trying to understand',
+            r'guiding it towards',
+            r'integration into society',
+            r'The story\'s setting',
+            r'alternate timeline',
+            r'character from \'[^\']+\''
+        ]
+        
+        # 텍스트를 문장 단위로 분리
+        sentences = re.split(r'([.!?]\s+)', text)
+        cleaned_sentences = []
+        
+        for i in range(0, len(sentences), 2):
+            if i >= len(sentences):
+                break
+            
+            sentence = sentences[i]
+            if i + 1 < len(sentences):
+                sentence += sentences[i + 1]
+            
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            
+            # 메타데이터 패턴 확인
+            is_metadata = False
+            for pattern in metadata_patterns:
+                if re.search(pattern, sentence, re.IGNORECASE):
+                    is_metadata = True
+                    break
+            
+            if is_metadata:
+                continue
+            
+            cleaned_sentences.append(sentence)
+        
+        # 정리된 문장들을 합치기
+        cleaned_text = ' '.join(cleaned_sentences).strip()
+        
+        # 2. 중복된 문단 제거 (같은 내용이 반복되는 경우)
+        # 문단 단위로 분리
+        paragraphs = re.split(r'\n\s*\n', cleaned_text)
+        unique_paragraphs = []
+        seen_paragraphs = set()
+        
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+            
+            # 문단 정규화 (공백 정규화, 소문자 변환)
+            normalized_para = re.sub(r'\s+', ' ', para.lower().strip())
+            
+            # 너무 짧은 문단은 제외 (1-2단어만 있는 경우)
+            if len(normalized_para.split()) < 3:
+                continue
+            
+            if normalized_para and normalized_para not in seen_paragraphs:
+                seen_paragraphs.add(normalized_para)
+                unique_paragraphs.append(para)
+        
+        final_text = '\n\n'.join(unique_paragraphs).strip()
+        
+        # 3. 최종 정리: 연속된 공백과 줄바꿈 정리
+        final_text = re.sub(r'[ \t]+', ' ', final_text)  # 여러 공백을 하나로
+        final_text = re.sub(r'\n\s*\n\s*\n+', '\n\n', final_text)  # 여러 줄바꿈을 두 개로
+        
+        # 4. 빈 응답이면 원본 반환 (정리 과정에서 모든 내용이 제거된 경우)
+        if not final_text or len(final_text.strip()) < 10:
+            return text
+        
+        return final_text.strip()
 

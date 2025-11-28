@@ -7,9 +7,11 @@ What if 시나리오 생성, 조회, Fork 기능을 제공하는 엔드포인트
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
+import json
 
 from app.services.scenario_management_service import ScenarioManagementService
 from app.services.scenario_chat_service import ScenarioChatService
+from app.services.character_data_loader import CharacterDataLoader
 
 router = APIRouter(prefix="/scenario", tags=["scenario"])
 
@@ -57,29 +59,81 @@ class ScenarioCreateRequest(BaseModel):
             }
         }
 
-class FirstConversationRequest(BaseModel):
-    """첫 대화 요청"""
-    initial_message: str
-    conversation_id: Optional[str] = None
+class ScenarioChatRequest(BaseModel):
+    """시나리오 대화 요청 (원본 시나리오용)"""
+    message: Optional[str] = Field(
+        None,
+        description="대화 메시지 (action이 없을 때 필수, action이 있으면 무시됨)"
+    )
+    conversation_id: Optional[str] = Field(
+        None,
+        description="임시 대화 ID (이어서 대화할 때 사용, 없으면 새 대화 시작)"
+    )
+    action: Optional[str] = Field(
+        None,
+        description="액션: 'save' 또는 'cancel' (5턴 완료 후 최종 저장/취소, action이 있으면 message는 무시됨)"
+    )
+    conversation_partner_type: Optional[str] = Field(
+        "stranger",
+        description="대화 상대 유형: 'stranger' (제3의 인물) 또는 'other_main_character' (다른 주인공)"
+    )
+    other_main_character: Optional[Dict] = Field(
+        None,
+        description="다른 주인공 정보 (conversation_partner_type이 'other_main_character'일 때 필수). character_name과 book_title 포함"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "message": "안녕하세요",
+                "conversation_id": None,
+                "conversation_partner_type": "stranger",
+                "other_main_character": None
+            }
+        }
 
-class FirstConversationContinueRequest(BaseModel):
-    """첫 대화 계속 요청"""
-    conversation_id: str
-    message: str
-
-class FirstConversationConfirmRequest(BaseModel):
-    """첫 대화 컨펌 요청"""
-    conversation_id: str
-    action: str  # "save" or "cancel"
+class ForkedScenarioChatRequest(BaseModel):
+    """Fork된 시나리오 대화 요청 (conversation_partner_type은 Fork 시 저장된 값 사용)"""
+    message: Optional[str] = Field(
+        None,
+        description="대화 메시지 (action이 없을 때 필수, action이 있으면 무시됨)"
+    )
+    conversation_id: Optional[str] = Field(
+        None,
+        description="임시 대화 ID (이어서 대화할 때 사용, 없으면 새 대화 시작)"
+    )
+    action: Optional[str] = Field(
+        None,
+        description="액션: 'save' 또는 'cancel' (5턴 완료 후 최종 저장/취소, action이 있으면 message는 무시됨)"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "message": "안녕하세요",
+                "conversation_id": None
+            }
+        }
 
 class ForkRequest(BaseModel):
-    """Fork 요청"""
-    initial_message: str
+    """Fork 요청 (시나리오 복사만 처리, 대화는 별도 엔드포인트에서 처리)"""
+    conversation_partner_type: str = Field(
+        ...,
+        description="대화 상대 유형: 'stranger' (제3의 인물) 또는 'other_main_character' (다른 주인공)"
+    )
+    other_main_character: Optional[Dict] = Field(
+        None,
+        description="다른 주인공 정보 (conversation_partner_type이 'other_main_character'일 때 필수). character_name과 book_title 포함"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "conversation_partner_type": "stranger",
+                "other_main_character": None
+            }
+        }
 
-class ForkConversationConfirmRequest(BaseModel):
-    """Fork된 시나리오 대화 컨펌 요청"""
-    conversation_id: str
-    action: str  # "save" or "cancel"
 
 # 의존성: 싱글톤 인스턴스
 _scenario_service_instance = None
@@ -165,26 +219,49 @@ async def create_scenario(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"시나리오 생성 실패: {str(e)}")
 
-@router.post("/{scenario_id}/first-conversation")
-async def start_first_conversation(
+@router.post("/{scenario_id}/chat")
+async def scenario_chat(
     scenario_id: str,
-    request: FirstConversationRequest,
+    request: ScenarioChatRequest,
     creator_id: str = "default_user",  # TODO: 실제 인증에서 가져오기
     service: ScenarioManagementService = Depends(get_scenario_service),
     chat_service: ScenarioChatService = Depends(get_scenario_chat_service)
 ):
     """
-    첫 대화 시작 (원본 시나리오 생성자용)
+    시나리오 대화 (통합 엔드포인트)
+    
+    - action이 없고 conversation_id가 없으면: 첫 대화 시작
+    - action이 없고 conversation_id가 있으면: 대화 이어가기
+    - action이 있으면: 저장/취소 처리 (5턴 완료 후)
     
     Args:
         scenario_id: 시나리오 ID
-        request: 첫 대화 요청
+        request: 대화 요청
         creator_id: 생성자 ID
     
     Returns:
-        대화 응답
+        대화 응답 또는 컨펌 결과
     """
     try:
+        # action이 있으면 저장/취소 처리
+        if request.action:
+            if request.action not in ["save", "cancel"]:
+                raise HTTPException(status_code=400, detail="action은 'save' 또는 'cancel'이어야 합니다.")
+            
+            if not request.conversation_id:
+                raise HTTPException(status_code=400, detail="action을 사용할 때는 conversation_id가 필수입니다.")
+            
+            result = chat_service.confirm_first_conversation(
+                scenario_id=scenario_id,
+                conversation_id=request.conversation_id,
+                action=request.action
+            )
+            return result
+        
+        # action이 없으면 대화 처리
+        if not request.message:
+            raise HTTPException(status_code=400, detail="message가 필요합니다.")
+        
         # 시나리오 조회 및 생성자 검증
         scenario = service.get_scenario(scenario_id, user_id=creator_id)
         if not scenario:
@@ -197,61 +274,49 @@ async def start_first_conversation(
                 detail=f"이 시나리오에 대한 접근 권한이 없습니다. 생성자만 접근할 수 있습니다."
             )
         
-        result = chat_service.first_conversation(
-            scenario_id=scenario_id,
-            initial_message=request.initial_message,
-            output_language="ko",
-            is_creator=True,
-            conversation_id=request.conversation_id
-        )
-        return result
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"대화 생성 실패: {str(e)}")
-
-@router.post("/{scenario_id}/first-conversation/continue")
-async def continue_first_conversation(
-    scenario_id: str,
-    request: FirstConversationContinueRequest,
-    creator_id: str = "default_user",  # TODO: 실제 인증에서 가져오기
-    service: ScenarioManagementService = Depends(get_scenario_service),
-    chat_service: ScenarioChatService = Depends(get_scenario_chat_service)
-):
-    """
-    첫 대화 계속 (턴 2~5)
-    
-    Args:
-        scenario_id: 시나리오 ID
-        request: 대화 계속 요청
-        creator_id: 생성자 ID
-    
-    Returns:
-        대화 응답
-    """
-    try:
-        # 시나리오 조회 및 생성자 검증
-        scenario = service.get_scenario(scenario_id, user_id=creator_id)
-        if not scenario:
-            raise HTTPException(status_code=404, detail=f"시나리오를 찾을 수 없습니다: {scenario_id}")
+        # 대화 상대 타입 처리
+        conversation_partner_type = request.conversation_partner_type
+        other_main_character = request.other_main_character
         
-        # 생성자 검증 (공개 시나리오는 제외)
-        if not scenario.get('is_public', False) and scenario.get('creator_id') != creator_id:
-            raise HTTPException(
-                status_code=403, 
-                detail=f"이 시나리오에 대한 접근 권한이 없습니다. 생성자만 접근할 수 있습니다."
+        # 기존 first_conversation이 있으면 그 설정을 우선 사용 (이어서 대화할 때)
+        if request.conversation_id:
+            # 임시 대화 파일에서 설정 가져오기
+            temp_conv_file = chat_service.temp_conversations_dir / f"{request.conversation_id}.json"
+            if temp_conv_file.exists():
+                with open(temp_conv_file, 'r', encoding='utf-8') as f:
+                    temp_conv = json.load(f)
+                if conversation_partner_type is None:
+                    conversation_partner_type = temp_conv.get("conversation_partner_type", "stranger")
+                if other_main_character is None:
+                    other_main_character = temp_conv.get("other_main_character")
+        
+        # 여전히 없으면 기본값 또는 자동 찾기
+        if conversation_partner_type is None:
+            conversation_partner_type = "stranger"
+        
+        if conversation_partner_type == "other_main_character" and not other_main_character:
+            characters = CharacterDataLoader.load_characters()
+            other_main_character = CharacterDataLoader.get_other_main_character(
+                characters,
+                scenario.get('character_name', ''),
+                scenario.get('book_title', '')
             )
+            if not other_main_character:
+                # 다른 주인공이 없으면 제3의 인물로 변경
+                conversation_partner_type = "stranger"
         
+        # 대화 처리
         result = chat_service.first_conversation(
             scenario_id=scenario_id,
             initial_message=request.message,
             output_language="ko",
             is_creator=True,
-            conversation_id=request.conversation_id
+            conversation_id=request.conversation_id,
+            conversation_partner_type=conversation_partner_type,
+            other_main_character=other_main_character
         )
         return result
+        
     except HTTPException:
         raise
     except ValueError as e:
@@ -259,78 +324,109 @@ async def continue_first_conversation(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"대화 생성 실패: {str(e)}")
 
-@router.post("/{scenario_id}/fork/{forked_scenario_id}/continue")
-async def continue_forked_conversation(
-    scenario_id: str,
+@router.post("/fork/{forked_scenario_id}/chat")
+async def forked_scenario_chat(
     forked_scenario_id: str,
-    request: FirstConversationContinueRequest,
+    request: ForkedScenarioChatRequest,
     user_id: str = "default_user",  # TODO: 실제 인증에서 가져오기
     chat_service: ScenarioChatService = Depends(get_scenario_chat_service)
 ):
     """
-    Fork된 시나리오 대화 계속 (턴 2~5)
+    Fork된 시나리오 대화 (통합 엔드포인트)
+    
+    - action이 없고 conversation_id가 없으면: 첫 대화 시작
+    - action이 없고 conversation_id가 있으면: 대화 이어가기
+    - action이 있으면: 저장/취소 처리 (5턴 완료 후)
     
     Args:
-        scenario_id: 원본 시나리오 ID
         forked_scenario_id: Fork된 시나리오 ID
-        request: 대화 계속 요청
+        request: 대화 요청
         user_id: 사용자 ID
     
     Returns:
-        대화 응답
+        대화 응답 또는 컨펌 결과
     """
     try:
-        # 원본 시나리오 로드 (first_conversation 참조용)
-        from app.services.scenario_management_service import ScenarioManagementService
-        service = ScenarioManagementService()
-        original_scenario = service.get_scenario(scenario_id)
-        if not original_scenario:
-            raise HTTPException(status_code=404, detail=f"시나리오를 찾을 수 없습니다: {scenario_id}")
+        # action이 있으면 저장/취소 처리
+        if request.action:
+            if request.action not in ["save", "cancel"]:
+                raise HTTPException(status_code=400, detail="action은 'save' 또는 'cancel'이어야 합니다.")
+            
+            if not request.conversation_id:
+                raise HTTPException(status_code=400, detail="action을 사용할 때는 conversation_id가 필수입니다.")
+            
+            result = chat_service.confirm_forked_conversation(
+                forked_scenario_id=forked_scenario_id,
+                conversation_id=request.conversation_id,
+                action=request.action,
+                user_id=user_id
+            )
+            return result
         
+        # action이 없으면 대화 처리
+        if not request.message:
+            raise HTTPException(status_code=400, detail="message가 필요합니다.")
+        
+        # Fork된 시나리오 로드
+        forked_scenario_file = chat_service.project_root / "data" / "scenarios" / "forked" / user_id / f"{forked_scenario_id}.json"
+        if not forked_scenario_file.exists():
+            raise HTTPException(status_code=404, detail=f"Fork된 시나리오를 찾을 수 없습니다: {forked_scenario_id}")
+        
+        with open(forked_scenario_file, 'r', encoding='utf-8') as f:
+            forked_scenario = json.load(f)
+        
+        # Fork된 시나리오에서 원본 시나리오 ID 가져오기 (first_conversation 호출 시 사용)
+        scenario_id = forked_scenario.get("original_scenario_id")
+        if not scenario_id:
+            raise HTTPException(status_code=400, detail="Fork된 시나리오에 원본 시나리오 ID가 없습니다.")
+        
+        # Fork 시 저장된 conversation_partner_type 사용 (요청에서 받지 않음)
+        # reference_first_conversation이 있으면 그 안에 conversation_partner_type이 있음
+        reference_first_conv = forked_scenario.get("reference_first_conversation")
+        conversation_partner_type = forked_scenario.get("conversation_partner_type")
+        other_main_character = forked_scenario.get("other_main_character")
+        
+        # reference_first_conversation이 있으면 그 안의 값 사용
+        if reference_first_conv:
+            conversation_partner_type = reference_first_conv.get("conversation_partner_type", "stranger")
+            other_main_character = reference_first_conv.get("other_main_character")
+        
+        # 기본값 설정
+        if not conversation_partner_type:
+            conversation_partner_type = "stranger"
+        
+        # other_main_character 자동 찾기 (필요한 경우)
+        if conversation_partner_type == "other_main_character" and not other_main_character:
+            characters = CharacterDataLoader.load_characters()
+            other_main_character = CharacterDataLoader.get_other_main_character(
+                characters,
+                forked_scenario.get('character_name', ''),
+                forked_scenario.get('book_title', '')
+            )
+            if not other_main_character:
+                # 다른 주인공이 없으면 제3의 인물로 변경
+                conversation_partner_type = "stranger"
+        
+        # 대화 처리
+        # reference_first_conversation이 있으면 그것을 사용, 없으면 None (기존 대화 맥락 사용 안 함)
         result = chat_service.first_conversation(
             scenario_id=scenario_id,
             initial_message=request.message,
             output_language="ko",
             is_creator=False,
             conversation_id=request.conversation_id,
-            original_first_conversation=original_scenario.get("first_conversation")
+            reference_first_conversation=reference_first_conv,  # reference_first_conversation 직접 사용
+            conversation_partner_type=conversation_partner_type,
+            other_main_character=other_main_character
         )
         return result
+        
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"대화 생성 실패: {str(e)}")
-
-@router.post("/{scenario_id}/first-conversation/confirm")
-async def confirm_first_conversation(
-    scenario_id: str,
-    request: FirstConversationConfirmRequest,
-    chat_service: ScenarioChatService = Depends(get_scenario_chat_service)
-):
-    """
-    첫 대화 최종 컨펌 (5턴 완료 후)
-    
-    Args:
-        scenario_id: 시나리오 ID
-        request: 컨펌 요청
-    
-    Returns:
-        컨펌 결과
-    """
-    try:
-        if request.action not in ["save", "cancel"]:
-            raise HTTPException(status_code=400, detail="action은 'save' 또는 'cancel'이어야 합니다.")
-        
-        result = chat_service.confirm_first_conversation(
-            scenario_id=scenario_id,
-            conversation_id=request.conversation_id,
-            action=request.action
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"컨펌 실패: {str(e)}")
 
 @router.get("/public")
 async def get_public_scenarios(
@@ -398,91 +494,58 @@ async def fork_scenario(
     scenario_id: str,
     request: ForkRequest,
     user_id: str = "default_user",  # TODO: 실제 인증에서 가져오기
-    service: ScenarioManagementService = Depends(get_scenario_service),
-    chat_service: ScenarioChatService = Depends(get_scenario_chat_service)
+    service: ScenarioManagementService = Depends(get_scenario_service)
 ):
     """
-    시나리오 Fork
+    시나리오 Fork (시나리오 복사만 처리)
     
     Args:
         scenario_id: 원본 시나리오 ID
-        request: Fork 요청
+        request: Fork 요청 (현재는 빈 요청)
         user_id: 사용자 ID
     
     Returns:
-        Fork된 시나리오 정보 및 첫 응답
+        Fork된 시나리오 정보
     """
     try:
-        # 원본 시나리오 로드 (first_conversation 참조용)
+        # 원본 시나리오 확인
         original_scenario = service.get_scenario(scenario_id)
         if not original_scenario:
             raise HTTPException(status_code=404, detail=f"시나리오를 찾을 수 없습니다: {scenario_id}")
         
-        # Fork 실행
-        forked_scenario = service.fork_scenario(scenario_id, user_id)
-        forked_scenario_id = forked_scenario["forked_scenario_id"]
+        # other_main_character 자동 찾기 (필요한 경우)
+        other_main_character = request.other_main_character
+        if request.conversation_partner_type == "other_main_character" and not other_main_character:
+            characters = CharacterDataLoader.load_characters()
+            other_main_character = CharacterDataLoader.get_other_main_character(
+                characters,
+                original_scenario.get('character_name', ''),
+                original_scenario.get('book_title', '')
+            )
+            if not other_main_character:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="다른 주인공을 찾을 수 없습니다. conversation_partner_type을 'stranger'로 변경하거나 other_main_character를 명시해주세요."
+                )
         
-        # 첫 대화 시작 (원본 first_conversation 참조)
-        result = chat_service.first_conversation(
+        # Fork 실행 (시나리오 복사만)
+        forked_scenario = service.fork_scenario(
             scenario_id=scenario_id,
-            initial_message=request.initial_message,
-            output_language="ko",
-            is_creator=False,
-            conversation_id=None,
-            original_first_conversation=original_scenario.get("first_conversation")
+            user_id=user_id,
+            conversation_partner_type=request.conversation_partner_type,
+            other_main_character=other_main_character
         )
+        forked_scenario_id = forked_scenario["forked_scenario_id"]
         
         return {
             "forked_scenario_id": forked_scenario_id,
             "original_scenario_id": scenario_id,
-            "response": result["response"],
-            "message": "시나리오를 fork했습니다. 대화를 시작하세요.",
-            "conversation_id": result["conversation_id"],
-            "turn_count": result["turn_count"],
-            "max_turns": result["max_turns"],
-            "is_regenerable": False,
-            "is_saved": False,  # 임시 저장소에 저장됨, 최종 컨펌 필요
-            "is_temporary": True
+            "message": "시나리오를 fork했습니다. 대화를 시작하려면 /scenario/{scenario_id}/fork/{forked_scenario_id}/chat 엔드포인트를 사용하세요."
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Fork 실패: {str(e)}")
 
-@router.post("/{scenario_id}/fork/{forked_scenario_id}/confirm-conversation")
-async def confirm_forked_conversation(
-    scenario_id: str,
-    forked_scenario_id: str,
-    request: ForkConversationConfirmRequest,
-    user_id: str = "default_user",  # TODO: 실제 인증에서 가져오기
-    chat_service: ScenarioChatService = Depends(get_scenario_chat_service)
-):
-    """
-    Fork된 시나리오 대화 최종 컨펌 (5턴 완료 후)
-    
-    Args:
-        scenario_id: 원본 시나리오 ID
-        forked_scenario_id: Fork된 시나리오 ID
-        request: 컨펌 요청
-        user_id: 사용자 ID
-    
-    Returns:
-        컨펌 결과
-    """
-    try:
-        if request.action not in ["save", "cancel"]:
-            raise HTTPException(status_code=400, detail="action은 'save' 또는 'cancel'이어야 합니다.")
-        
-        result = chat_service.confirm_forked_conversation(
-            forked_scenario_id=forked_scenario_id,
-            conversation_id=request.conversation_id,
-            action=request.action,
-            user_id=user_id
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"컨펌 실패: {str(e)}")
 
 
