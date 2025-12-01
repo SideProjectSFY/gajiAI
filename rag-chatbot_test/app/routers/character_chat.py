@@ -13,8 +13,9 @@ import json
 from app.services.character_chat_service import CharacterChatService
 from app.services.api_key_manager import get_api_key_manager
 from app.services.character_data_loader import CharacterDataLoader
+from app.utils.metrics import increment_request, increment_conversation
 
-router = APIRouter(prefix="/character", tags=["character-chat"])
+router = APIRouter(prefix="/api/ai", tags=["ai-conversation"])
 
 # 요청/응답 모델
 class CharacterListResponse(BaseModel):
@@ -79,7 +80,12 @@ def get_character_service() -> CharacterChatService:
             detail=f"API Key Manager 초기화 실패: {str(e)}"
         )
 
-@router.get("/list", response_model=CharacterListResponse)
+@router.get(
+    "/characters",
+    response_model=CharacterListResponse,
+    summary="캐릭터 목록 조회",
+    description="사용 가능한 모든 캐릭터 목록을 반환합니다."
+)
 async def list_characters(service: CharacterChatService = Depends(get_character_service)):
     """
     사용 가능한 캐릭터 목록 조회
@@ -96,7 +102,43 @@ async def list_characters(service: CharacterChatService = Depends(get_character_
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"캐릭터 목록 조회 실패: {str(e)}")
 
-@router.get("/info/{character_name}")
+@router.get(
+    "/characters/{vectordb_id}",
+    summary="캐릭터 정보 조회 (Internal API)",
+    description="VectorDB ID로 특정 캐릭터의 상세 정보를 조회합니다."
+)
+async def get_character_by_vectordb_id(
+    vectordb_id: str,
+    service: CharacterChatService = Depends(get_character_service)
+):
+    """
+    VectorDB ID로 캐릭터 정보 조회 (Internal API)
+    
+    Args:
+        vectordb_id: VectorDB 캐릭터 ID
+    
+    Returns:
+        캐릭터 상세 정보
+    """
+    try:
+        # vectordb_id를 character_name으로 사용 (실제 구현에서는 VectorDB에서 조회)
+        character = service.get_character_info(vectordb_id)
+        if not character:
+            raise HTTPException(
+                status_code=404,
+                detail=f"캐릭터를 찾을 수 없습니다: {vectordb_id}"
+            )
+        return character
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"캐릭터 정보 조회 실패: {str(e)}")
+
+@router.get(
+    "/characters/info/{character_name}",
+    summary="캐릭터 정보 조회 (이름으로)",
+    description="특정 캐릭터의 상세 정보(페르소나, 말투, 배경 등)를 조회합니다."
+)
 async def get_character_info(
     character_name: str,
     book_title: Optional[str] = None,
@@ -128,21 +170,31 @@ async def get_character_info(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"캐릭터 정보 조회 실패: {str(e)}")
 
-@router.post("/chat", response_model=ChatResponse)
-async def chat_with_character(
+@router.post(
+    "/conversations/{conversation_id}/messages",
+    response_model=ChatResponse,
+    summary="AI 캐릭터와 대화",
+    description="책 속 인물과 실시간 대화를 진행합니다. RAG + Gemini 2.5 Flash를 사용합니다."
+)
+async def send_message_to_ai_character(
+    conversation_id: str,
     request: ChatRequest,
     service: CharacterChatService = Depends(get_character_service)
 ):
     """
-    캐릭터와 대화
+    AI 캐릭터와 대화 (RAG + Gemini 2.5 Flash)
     
     Args:
+        conversation_id: 대화 ID
         request: 대화 요청 (캐릭터 이름, 메시지, 대화 기록)
     
     Returns:
         캐릭터의 응답
     """
     try:
+        # 메트릭: 요청 증가
+        increment_request("/api/ai/conversations/{conversation_id}/messages", success=True)
+        
         # 시나리오 기반 대화인지 확인
         if request.scenario_id:
             from app.services.scenario_chat_service import ScenarioChatService
@@ -182,6 +234,9 @@ async def chat_with_character(
                 other_main_character=other_main_character
             )
             
+            # 메트릭: 시나리오 대화 증가
+            increment_conversation("scenario")
+            
             return ChatResponse(
                 response=result["response"],
                 character_name=result["character_name"],
@@ -218,7 +273,11 @@ async def chat_with_character(
             )
             
             if 'error' in result:
+                increment_request("/character/chat", success=False)
                 raise HTTPException(status_code=400, detail=result['error'])
+            
+            # 메트릭: 캐릭터 대화 증가
+            increment_conversation("character")
             
             # ChatResponse에 맞게 변환 (conversation_id, turn_count, max_turns 포함)
             return ChatResponse(
@@ -233,11 +292,18 @@ async def chat_with_character(
             )
         
     except HTTPException:
+        increment_request("/api/ai/conversations/{conversation_id}/messages", success=False)
         raise
     except Exception as e:
+        increment_request("/api/ai/conversations/{conversation_id}/messages", success=False)
         raise HTTPException(status_code=500, detail=f"대화 생성 실패: {str(e)}")
 
-@router.get("/health")
+@router.get(
+    "/health",
+    tags=["health"],
+    summary="캐릭터 채팅 서비스 헬스 체크",
+    description="캐릭터 채팅 서비스의 상태를 확인합니다."
+)
 async def health_check():
     """헬스 체크"""
     try:

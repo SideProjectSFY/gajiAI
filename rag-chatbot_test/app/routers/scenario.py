@@ -12,8 +12,9 @@ import json
 from app.services.scenario_management_service import ScenarioManagementService
 from app.services.scenario_chat_service import ScenarioChatService
 from app.services.character_data_loader import CharacterDataLoader
+from app.utils.metrics import increment_request, increment_scenario_created, increment_scenario_forked, increment_conversation
 
-router = APIRouter(prefix="/scenario", tags=["scenario"])
+router = APIRouter(prefix="/api/scenarios", tags=["scenarios"])
 
 # 요청/응답 모델
 class ChangeDescription(BaseModel):
@@ -153,7 +154,11 @@ def get_scenario_chat_service() -> ScenarioChatService:
         _scenario_chat_service_instance = ScenarioChatService()
     return _scenario_chat_service_instance
 
-@router.post("/create")
+@router.post(
+    "",
+    summary="시나리오 생성",
+    description="What If 시나리오를 생성합니다. 캐릭터 속성, 사건, 배경 중 하나 이상을 변경해야 합니다."
+)
 async def create_scenario(
     request: ScenarioCreateRequest,
     creator_id: str = "default_user",  # TODO: 실제 인증에서 가져오기
@@ -174,6 +179,9 @@ async def create_scenario(
         기본 캐릭터 대화는 /character/chat 엔드포인트를 사용하세요.
     """
     try:
+        # 메트릭: 요청 증가
+        increment_request("/scenario/create", success=True)
+        
         # 변경사항이 있는지 확인
         has_any_changes = (
             (request.character_property_changes and request.character_property_changes.enabled) or
@@ -215,11 +223,19 @@ async def create_scenario(
             is_public=request.is_public
         )
         
+        # 메트릭: 시나리오 생성 증가
+        increment_scenario_created()
+        
         return result
     except Exception as e:
+        increment_request("/api/scenarios", success=False)
         raise HTTPException(status_code=500, detail=f"시나리오 생성 실패: {str(e)}")
 
-@router.post("/{scenario_id}/chat")
+@router.post(
+    "/{scenario_id}/chat",
+    summary="시나리오 대화 (FastAPI 내부)",
+    description="시나리오 기반 대화를 진행합니다. 첫 대화 시작, 대화 이어가기, 저장/취소 기능을 제공합니다. (참고: 실제 대화는 POST /api/ai/conversations/{conversation_id}/messages 사용)"
+)
 async def scenario_chat(
     scenario_id: str,
     request: ScenarioChatRequest,
@@ -243,6 +259,9 @@ async def scenario_chat(
         대화 응답 또는 컨펌 결과
     """
     try:
+        # 메트릭: 요청 증가
+        increment_request("/api/scenarios/{scenario_id}/chat", success=True)
+        
         # action이 있으면 저장/취소 처리
         if request.action:
             if request.action not in ["save", "cancel"]:
@@ -315,16 +334,23 @@ async def scenario_chat(
             conversation_partner_type=conversation_partner_type,
             other_main_character=other_main_character
         )
+        
+        # 메트릭: 시나리오 대화 증가
+        increment_conversation("scenario")
+        
         return result
         
     except HTTPException:
+        increment_request("/api/scenarios/{scenario_id}/chat", success=False)
         raise
     except ValueError as e:
+        increment_request("/api/scenarios/{scenario_id}/chat", success=False)
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        increment_request("/api/scenarios/{scenario_id}/chat", success=False)
         raise HTTPException(status_code=500, detail=f"대화 생성 실패: {str(e)}")
 
-@router.post("/fork/{forked_scenario_id}/chat")
+@router.post("/{scenario_id}/fork/{forked_scenario_id}/chat")
 async def forked_scenario_chat(
     forked_scenario_id: str,
     request: ForkedScenarioChatRequest,
@@ -347,6 +373,9 @@ async def forked_scenario_chat(
         대화 응답 또는 컨펌 결과
     """
     try:
+        # 메트릭: 요청 증가
+        increment_request("/api/scenarios/{scenario_id}/fork/{forked_scenario_id}/chat", success=True)
+        
         # action이 있으면 저장/취소 처리
         if request.action:
             if request.action not in ["save", "cancel"]:
@@ -419,17 +448,28 @@ async def forked_scenario_chat(
             conversation_partner_type=conversation_partner_type,
             other_main_character=other_main_character
         )
+        
+        # 메트릭: 시나리오 대화 증가
+        increment_conversation("scenario")
+        
         return result
         
     except HTTPException:
+        increment_request("/api/scenarios/{scenario_id}/fork/{forked_scenario_id}/chat", success=False)
         raise
     except ValueError as e:
+        increment_request("/api/scenarios/{scenario_id}/fork/{forked_scenario_id}/chat", success=False)
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        increment_request("/api/scenarios/{scenario_id}/fork/{forked_scenario_id}/chat", success=False)
         raise HTTPException(status_code=500, detail=f"대화 생성 실패: {str(e)}")
 
-@router.get("/public")
-async def get_public_scenarios(
+@router.get(
+    "",
+    summary="시나리오 목록 조회",
+    description="시나리오 목록을 조회합니다. 책 제목, 캐릭터 이름, 시나리오 타입으로 필터링할 수 있습니다."
+)
+async def list_scenarios(
     book_title: Optional[str] = None,
     character_name: Optional[str] = None,
     sort: str = "popular",
@@ -459,9 +499,13 @@ async def get_public_scenarios(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"시나리오 목록 조회 실패: {str(e)}")
 
-@router.get("/{scenario_id}")
+@router.get(
+    "/{id}",
+    summary="시나리오 상세 조회",
+    description="시나리오의 상세 정보를 조회합니다. Fork 전 미리보기로 사용할 수 있습니다."
+)
 async def get_scenario(
-    scenario_id: str,
+    id: str,
     user_id: Optional[str] = None,
     service: ScenarioManagementService = Depends(get_scenario_service)
 ):
@@ -469,16 +513,16 @@ async def get_scenario(
     시나리오 상세 조회 (Fork 전 미리보기)
     
     Args:
-        scenario_id: 시나리오 ID
+        id: 시나리오 ID
         user_id: 사용자 ID (비공개 시나리오 조회용)
     
     Returns:
         시나리오 상세 정보
     """
     try:
-        scenario = service.get_scenario(scenario_id, user_id)
+        scenario = service.get_scenario(id, user_id)
         if not scenario:
-            raise HTTPException(status_code=404, detail=f"시나리오를 찾을 수 없습니다: {scenario_id}")
+            raise HTTPException(status_code=404, detail=f"시나리오를 찾을 수 없습니다: {id}")
         
         # can_fork 확인 (임시로 항상 True)
         scenario["can_fork"] = True
@@ -489,9 +533,13 @@ async def get_scenario(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"시나리오 조회 실패: {str(e)}")
 
-@router.post("/{scenario_id}/fork")
+@router.post(
+    "/{id}/fork",
+    summary="시나리오 Fork",
+    description="다른 사용자의 시나리오를 기반으로 새로운 시나리오를 생성합니다."
+)
 async def fork_scenario(
-    scenario_id: str,
+    id: str,
     request: ForkRequest,
     user_id: str = "default_user",  # TODO: 실제 인증에서 가져오기
     service: ScenarioManagementService = Depends(get_scenario_service)
@@ -500,18 +548,21 @@ async def fork_scenario(
     시나리오 Fork (시나리오 복사만 처리)
     
     Args:
-        scenario_id: 원본 시나리오 ID
-        request: Fork 요청 (현재는 빈 요청)
+        id: 원본 시나리오 ID
+        request: Fork 요청
         user_id: 사용자 ID
     
     Returns:
         Fork된 시나리오 정보
     """
     try:
+        # 메트릭: 요청 증가
+        increment_request("/api/scenarios/{id}/fork", success=True)
+        
         # 원본 시나리오 확인
-        original_scenario = service.get_scenario(scenario_id)
+        original_scenario = service.get_scenario(id)
         if not original_scenario:
-            raise HTTPException(status_code=404, detail=f"시나리오를 찾을 수 없습니다: {scenario_id}")
+            raise HTTPException(status_code=404, detail=f"시나리오를 찾을 수 없습니다: {id}")
         
         # other_main_character 자동 찾기 (필요한 경우)
         other_main_character = request.other_main_character
@@ -530,21 +581,32 @@ async def fork_scenario(
         
         # Fork 실행 (시나리오 복사만)
         forked_scenario = service.fork_scenario(
-            scenario_id=scenario_id,
+            scenario_id=id,
             user_id=user_id,
             conversation_partner_type=request.conversation_partner_type,
             other_main_character=other_main_character
         )
         forked_scenario_id = forked_scenario["forked_scenario_id"]
         
+        # 메트릭: 시나리오 Fork 증가
+        increment_scenario_forked()
+        
         return {
-            "forked_scenario_id": forked_scenario_id,
-            "original_scenario_id": scenario_id,
-            "message": "시나리오를 fork했습니다. 대화를 시작하려면 /scenario/{scenario_id}/fork/{forked_scenario_id}/chat 엔드포인트를 사용하세요."
+            "id": forked_scenario_id,
+            "base_story": original_scenario.get("book_title", ""),
+            "parent_scenario_id": id,
+            "scenario_type": original_scenario.get("scenario_type", "CHARACTER_CHANGE"),
+            "parameters": original_scenario.get("parameters", {}),
+            "quality_score": 0.0,
+            "creator_id": user_id,
+            "fork_count": 0,
+            "created_at": forked_scenario.get("created_at", "")
         }
     except ValueError as e:
+        increment_request("/api/scenarios/{id}/fork", success=False)
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        increment_request("/api/scenarios/{id}/fork", success=False)
         raise HTTPException(status_code=500, detail=f"Fork 실패: {str(e)}")
 
 
