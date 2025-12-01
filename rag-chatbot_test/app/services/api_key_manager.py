@@ -153,8 +153,11 @@ class APIKeyManager:
         
         return None
     
-    def switch_to_next_key(self) -> bool:
+    def switch_to_next_key(self, mark_current_as_failed: bool = True) -> bool:
         """다음 사용 가능한 키로 전환
+        
+        Args:
+            mark_current_as_failed: 현재 키를 실패 목록에 추가할지 여부 (기본값: True)
         
         Returns:
             성공 여부 (True: 전환 성공, False: 사용 가능한 키 없음)
@@ -164,8 +167,9 @@ class APIKeyManager:
         if next_index is None:
             return False
         
-        # 현재 키를 실패 목록에 추가
-        self.failed_keys[self.current_key_index] = time.time()
+        # 현재 키를 실패 목록에 추가 (에러 발생 시에만)
+        if mark_current_as_failed:
+            self.failed_keys[self.current_key_index] = time.time()
         
         # 키 전환
         self.current_key_index = next_index
