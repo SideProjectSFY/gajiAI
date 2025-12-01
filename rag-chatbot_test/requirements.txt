@@ -1,20 +1,44 @@
-# FastAPI
-fastapi==0.115.0
-uvicorn[standard]==0.32.0
-pydantic==2.9.2
+# FastAPI Core
+fastapi>=0.123.0
+uvicorn[standard]>=0.38.0
+pydantic>=2.12.0
+pydantic-settings>=2.12.0
 
-# Gemini AI (latest version with File Search support)
+# Gemini API
 google-genai==1.52.0
 
-# Environment variables
-python-dotenv==1.0.1
+# Vector DB
+chromadb>=1.3.5
 
-# Data processing
-pandas==2.2.3
-numpy==2.1.3
+# Async HTTP Client (Spring Boot callbacks)
+httpx>=0.28.1
+
+# Celery & Redis (Async task queue + Long Polling)
+# OPTIONAL: Redis is now optional - falls back to in-memory backend if not available
+celery>=5.5.3
+redis>=7.1.0  # OPTIONAL: Can be omitted for development (uses memory backend)
+
+# Retry Logic
+tenacity>=9.0.0
+
+# Logging
+structlog>=25.1.0
 
 # Hugging Face Datasets
-datasets==3.1.0
+datasets==4.4.1
+pandas>=2.3.0
+numpy>=1.26.4
+pyarrow>=14.0.1  # For parquet files
+
+nltk>=3.9.1
 
 # Progress bar
-tqdm==4.66.5
+tqdm>=4.66.1
+
+python-dotenv>=1.1.1
+requests>=2.32.3
+
+# Testing
+pytest>=8.3.4
+pytest-asyncio>=1.3.0
+pytest-cov>=7.0.0
