@@ -1,0 +1,55 @@
+name: "📌 Epic"
+description: "스프린트·대규모 기능 등 상위 목표 정의"
+title: "[EPIC] "
+labels: ["epic"]
+body:
+  - type: input
+    id: goal
+    attributes:
+      label: 목표(Goal)
+      placeholder: SP001 MVP 릴리스
+  - type: input
+    id: timeline
+    attributes:
+      label: 기간(Timeline)
+      placeholder: 2025-07-07 - 2025-07-23
+  - type: textarea
+    id: scope
+    attributes:
+      label: 범위(Scope)
+      description: 포함·제외 항목을 명확히
+      placeholder: |
+        포함: 온보딩, 질문 작성, 알림  
+        제외: 구독 결제
+  - type: textarea
+    id: user_stories
+    attributes:
+      label: 사용자 스토리(User Stories)
+      placeholder: |
+        - 사용자는 온보딩 화면을 통해 앱 기능을 이해할 수 있다.
+        - 사용자는 질문을 작성하고 업로드할 수 있다.
+  - type: textarea
+    id: success_criteria
+    attributes:
+      label: 성공 기준(Success Criteria)
+      placeholder: |
+        - 온보딩 완료율 70% 이상
+        - 질문 작성 후 1주일 내 3회 이상 앱 방문
+  - type: textarea
+    id: deliverables
+    attributes:
+      label: 산출물(Deliverables)
+      placeholder: TestFlight 빌드, 관리자 웹 MVP
+  - type: textarea
+    id: checklist
+    attributes:
+      label: 하위 이슈 체크리스트
+      description: "- [ ] #issue_number 형식으로 작성 시 자동 링크"
+      placeholder: |
+        - [ ] #12 온보딩 Carousel
+        - [ ] #13 질문 업로드
+  - type: textarea
+    id: resources
+    attributes:
+      label: 참고자료(Resources)
+      placeholder: Notion 문서, Figma, 외부 레퍼런스 링크

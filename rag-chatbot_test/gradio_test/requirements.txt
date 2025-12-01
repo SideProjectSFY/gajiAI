@@ -1,0 +1,3 @@
+# Gradio
+gradio>=6.0.0
+

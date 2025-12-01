@@ -9,16 +9,34 @@ env/
 ENV/
 .venv
 
-# 데이터
+# 데이터 (로컬 생성 파일, git에 포함하지 않음)
 data/
 chroma_data/
 *.txt
 *.json
 !requirements.txt
+!package.json
+!package-lock.json
+!tsconfig.json
+
+# 대용량 데이터셋 파일
+data/origin_dataset/
+data/origin_txt/
+data/cache/
+*.arrow
+
+# 시나리오 데이터 (개발/테스트용)
+data/scenarios/forked/
+data/scenarios/private/
+data/scenarios/temp_conversations/
+
+# File Search Store 정보 (API 키별, 로컬 생성)
+data/file_search_store_info*.json
 
 # 환경변수
 .env
 .env.local
+.env.*
 
 # IDE
 .vscode/

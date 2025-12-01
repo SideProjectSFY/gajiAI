@@ -1,23 +1,44 @@
-# 데이터 수집
-datasets>=2.14.0
-gutenbergpy>=0.1.5
-pandas>=2.0.0
+# FastAPI Core
+fastapi>=0.123.0
+uvicorn[standard]>=0.38.0
+pydantic>=2.12.0
+pydantic-settings>=2.12.0
 
-# 전처리
-nltk>=3.8.1
+# Gemini API
+google-genai==1.52.0
 
-# 임베딩 및 LLM
-google-generativeai>=0.3.0
+# Vector DB
+chromadb>=1.3.5
 
-# 벡터 DB
-chromadb>=0.4.18
+# Async HTTP Client (Spring Boot callbacks)
+httpx>=0.28.1
 
-# API
-fastapi>=0.110.0
-uvicorn[standard]>=0.27.0
-pydantic>=2.5.0
+# Celery & Redis (Async task queue + Long Polling)
+# OPTIONAL: Redis is now optional - falls back to in-memory backend if not available
+celery>=5.5.3
+redis>=7.1.0  # OPTIONAL: Can be omitted for development (uses memory backend)
 
-# 유틸리티
-python-dotenv>=1.0.0
-requests>=2.31.0
+# Retry Logic
+tenacity>=9.0.0
 
+# Logging
+structlog>=25.1.0
+
+# Hugging Face Datasets
+datasets==4.4.1
+pandas>=2.3.0
+numpy>=1.26.4
+pyarrow>=14.0.1  # For parquet files
+
+nltk>=3.9.1
+
+# Progress bar
+tqdm>=4.66.1
+
+python-dotenv>=1.1.1
+requests>=2.32.3
+
+# Testing
+pytest>=8.3.4
+pytest-asyncio>=1.3.0
+pytest-cov>=7.0.0
