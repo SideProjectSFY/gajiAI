@@ -1,203 +1,192 @@
 # 🚀 서비스 실행 가이드
 
-## 사전 준비사항 확인
+## 사전 준비사항
 
 ### 1. 필수 파일 확인
-다음 파일들이 존재하는지 확인하세요:
-- ✅ `.env` 파일 (API 키 설정)
-- ✅ `data/file_search_store_info.json` (File Search Store 정보)
-- ✅ `data/characters.json` 또는 `data/characters/` 폴더 (캐릭터 정보)
-- ✅ `data/origin_txt/` 폴더에 책 텍스트 파일들
-- ✅ `data/char_graph/` 폴더에 인물 관계도 JSON 파일들
+- `.env` 파일 (API 키 설정)
+- `data/file_search_store_info.json` (File Search Store 정보)
+- `data/characters/` 폴더 (캐릭터 정보)
+- `data/origin_txt/` 폴더 (책 텍스트 파일들)
 
-### 2. 패키지 설치 확인
+### 2. 패키지 설치
 ```bash
 pip install -r requirements.txt
 ```
 
-## 서비스 실행 단계
+### 3. 환경 변수 설정
 
-### 1단계: API 키 설정 확인
-
-`.env` 파일이 있는지 확인하고, 없다면 생성하세요:
-
-```bash
-# Windows PowerShell
-cd C:\SSAFY\gaji_PJT\gajiAI\rag-chatbot_test
-```
-
-`.env` 파일 내용 예시:
+`.env` 파일 생성:
 ```env
+# Gemini API 키 (필수)
 GEMINI_API_KEYS=YOUR-GEMINI-API-KEY1,YOUR-GEMINI-API-KEY2,YOUR-GEMINI-API-KEY3
+
+# 또는 단일 키 (레거시 지원)
+# GEMINI_API_KEY=YOUR-GEMINI-API-KEY
+
+# Redis 설정 (선택적 - Celery 및 Long Polling용)
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_DB=0
+REDIS_PASSWORD=  # 비밀번호가 있으면 설정
+
+# Spring Boot URL (CORS 설정용)
+SPRING_BOOT_URL=http://localhost:8080
+CORS_ALLOWED_ORIGINS=http://localhost:8080
+
+# 로깅 설정 (선택적)
+LOG_LEVEL=INFO
+LOG_FORMAT=console  # "console" 또는 "json"
+
+# VectorDB 설정 (선택적)
+VECTORDB_TYPE=chromadb  # "chromadb" 또는 "pinecone"
+CHROMA_PATH=./chroma_data
 ```
 
-### 2단계: 캐릭터 페르소나 생성 (선택, 처음 실행 시)
+## 서버 실행
 
-캐릭터 페르소나를 자동으로 생성하려면:
+### 방법 1: 직접 실행 (권장)
 
 ```bash
-# File Search를 사용하여 원본 텍스트와 인물 관계도를 분석하여
-# 각 책의 id 1, 2 캐릭터의 페르소나와 말투를 자동 생성
-py scripts/generate_character_personas.py
+cd gajiAI/rag-chatbot_test
+py -m uvicorn app.main:app --reload
 ```
 
-**기능**:
-- `origin_txt/`의 원본 텍스트를 File Search로 분석
-- `char_graph/`의 인물 관계도에서 id 1, 2 캐릭터 추출
-- 각 캐릭터의 페르소나와 말투를 **영어/한국어** 이중 생성
-- `data/characters/` 폴더에 책별로 JSON 파일 저장
+서버가 시작되면: http://localhost:8000
 
-**소요 시간**: 책 1개당 약 4-6분 (캐릭터 2명 × 4개 생성)
+### 방법 2: Docker Compose (선택적)
 
-**주의사항**:
-- File Search Store가 설정되어 있어야 합니다 (`py scripts/setup_file_search.py` 실행 필요)
-- API 키 할당량을 고려하여 실행하세요
-
-### 3단계: 서버 실행
+**사전 요구사항**: Docker Desktop 실행 중
 
 ```bash
-# 프로젝트 디렉토리로 이동
-cd C:\SSAFY\gaji_PJT\gajiAI\rag-chatbot_test
+# 모든 서비스 시작 (FastAPI + Redis + Celery)
+docker-compose up -d
 
-# 서버 시작
-py -m uvicorn app.main:app
+# 로그 확인
+docker-compose logs -f fastapi
+
+# 서비스 중지
+docker-compose down
 ```
 
-또는:
+### 방법 3: Redis 및 Celery 워커 실행 (선택적)
 
+비동기 작업(소설 임베딩, 캐릭터 추출)을 사용하려면 Redis와 Celery 워커가 필요합니다.
+
+#### Redis 실행
+
+**Windows**:
 ```bash
-python -m uvicorn app.main:app
+# 방법 1: 스크립트 사용
+scripts\start_redis.bat
+
+# 방법 2: Docker 직접 실행
+docker run -d -p 6379:6379 --name gaji-redis redis:latest
 ```
 
-### 4단계: 서비스 확인
+**Linux/Mac**:
+```bash
+# 방법 1: 스크립트 사용
+./scripts/start_redis.sh
 
-서버가 정상적으로 시작되면 다음 메시지가 표시됩니다:
-```
-INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
-INFO:     Application startup complete.
-[OK] API 키 #1 사용 중
-```
-
-### 5단계: API 테스트
-
-#### 브라우저에서 확인
-- API 문서: http://localhost:8000/docs
-- 헬스 체크: http://localhost:8000/character/health
-- 캐릭터 목록: http://localhost:8000/character/list
-
-#### PowerShell에서 테스트
-```powershell
-# 헬스 체크
-Invoke-WebRequest -Uri "http://localhost:8000/character/health" -UseBasicParsing
-
-# 캐릭터 목록 조회
-Invoke-WebRequest -Uri "http://localhost:8000/character/list" -UseBasicParsing
+# 방법 2: Docker 직접 실행
+docker run -d -p 6379:6379 --name gaji-redis redis:latest
 ```
 
-## 📡 API 엔드포인트
+#### Celery 워커 실행
 
-### 캐릭터 목록 조회
-```http
-GET /character/list
+**Windows**:
+```bash
+scripts\start_celery_worker.bat
 ```
 
-### 캐릭터 정보 조회
-```http
-GET /character/info/{character_name}
+**Linux/Mac**:
+```bash
+chmod +x scripts/start_celery_worker.sh
+./scripts/start_celery_worker.sh
 ```
 
-### 캐릭터와 대화
-```http
-POST /character/chat
-Content-Type: application/json
+**참고**: Celery 워커는 별도 터미널 창에서 실행해야 합니다.
 
-{
-  "character_name": "Romeo Montague",
-  "message": "줄리엣에 대해 어떻게 생각해?",
-  "conversation_history": [],  // 선택사항 (레거시 호환)
-  "conversation_id": null,  // 이어서 대화 시 기존 ID (5턴 연속 대화 지원)
-  "conversation_partner_type": "stranger",  // "stranger" 또는 "other_main_character"
-  "other_main_character": null  // conversation_partner_type이 "other_main_character"일 때 필수
-}
-```
+## 주요 API 엔드포인트
 
-**응답**:
-```json
-{
-  "response": "...",
-  "character_name": "Romeo Montague",
-  "book_title": "Romeo and Juliet",
-  "conversation_id": "conv_123",  // 임시 대화 ID
-  "turn_count": 1,
-  "max_turns": 5,
-  "grounding_metadata": {...}
-}
-```
+- **API 문서**: http://localhost:8000/docs
+- **헬스 체크**: `GET /health`
+- **캐릭터 목록**: `GET /api/ai/characters`
+- **캐릭터 정보**: `GET /api/ai/characters/info/{character_name}`
+- **AI 대화**: `POST /api/ai/conversations/{conversation_id}/messages`
+- **시나리오 생성**: `POST /api/scenarios`
+- **시나리오 목록**: `GET /api/scenarios`
+- **시나리오 상세**: `GET /api/scenarios/{id}`
+- **시나리오 대화**: `POST /api/scenarios/{scenario_id}/chat`
+- **시나리오 Fork**: `POST /api/scenarios/{id}/fork`
+- **소설 임베딩**: `POST /api/ai/novels/ingest`
+- **캐릭터 추출**: `POST /api/ai/characters/extract`
+- **의미 검색**: `POST /api/ai/search/passages`
+- **메트릭 조회**: `GET /api/metrics`
+- **작업 상태**: `GET /api/tasks/{task_id}/status`
 
-**대화 이어가기**:
-```http
-POST /character/chat
-Content-Type: application/json
-
-{
-  "character_name": "Romeo Montague",
-  "message": "다음 질문...",
-  "conversation_id": "conv_123"  // 이전 응답의 conversation_id 사용
-}
-```
-
-
-## 🎭 사용 가능한 캐릭터
-
-| 캐릭터 이름 | 책 제목 |
-|------------|---------|
-| Victor Frankenstein | Frankenstein; Or, The Modern Prometheus |
-| Elizabeth Bennet | Pride and Prejudice |
-| Jay Gatsby | The Great Gatsby |
-| Romeo Montague | Romeo and Juliet |
-| Tom Sawyer | The Adventures of Tom Sawyer, Complete |
-| Sherlock Holmes | The Adventures of Sherlock Holmes |
-
-## 🔧 문제 해결
+## 문제 해결
 
 ### 서버가 시작되지 않는 경우
-1. **포트 충돌**: 다른 프로세스가 8000번 포트를 사용 중일 수 있습니다.
+1. **포트 충돌**: `--port 8001` 옵션으로 다른 포트 사용
+2. **API 키 오류**: `.env` 파일의 API 키 확인
+3. **File Search Store 오류**: `py scripts/setup_file_search.py --mode main` 실행
+
+### Docker 오류
+- Docker Desktop이 실행 중인지 확인: `docker ps`
+- Docker Desktop이 없으면 방법 1(직접 실행) 사용
+
+### Redis/Celery 오류
+- **Redis 연결 실패**: Redis가 실행 중인지 확인 (`docker ps` 또는 `redis-cli ping`)
+- **Celery 워커 오류**: 
+  - Windows에서는 `--pool=solo` 옵션이 자동 적용됩니다
+  - 프로젝트 루트 디렉토리에서 실행해야 합니다
+  - `ModuleNotFoundError: No module named 'app'` 오류 시: 스크립트를 사용하세요 (`scripts/start_celery_worker.bat`)
+
+**참고**: Redis와 Celery는 선택적 구성 요소입니다. 없어도 기본 AI 대화 기능은 정상 작동합니다. 다만 비동기 작업(소설 임베딩, 캐릭터 추출)은 Celery 워커가 필요합니다.
+
+## 참고사항
+
+### 필수 구성 요소
+- ✅ FastAPI 서버
+- ✅ Gemini API 키
+- ✅ File Search Store (`data/file_search_store_info.json`)
+
+### 선택적 구성 요소
+
+**없어도 기본 기능 작동**:
+- ⚪ Redis (Long Polling 및 Celery 브로커용)
+- ⚪ Celery 워커 (비동기 작업용)
+
+**비동기 작업 사용 시 필요**:
+- ✅ Redis (Celery 브로커)
+- ✅ Celery 워커 실행
+
+**비동기 작업 예시**:
+- 소설 임베딩 (`POST /api/ai/novels/ingest`)
+- 캐릭터 추출 (`POST /api/ai/characters/extract`)
+
+### 실행 순서 (비동기 작업 사용 시)
+
+1. **Redis 시작** (선택적)
    ```bash
-   # 다른 포트로 실행
-   py -m uvicorn app.main:app --reload --port 8001
+   scripts\start_redis.bat  # Windows
+   # 또는
+   docker-compose up -d redis
    ```
 
-2. **API 키 오류**: `.env` 파일의 API 키가 올바른지 확인하세요.
+2. **Celery 워커 시작** (선택적)
+   ```bash
+   scripts\start_celery_worker.bat  # Windows
    ```
-   [ERROR] API Key Manager 초기화 실패
+
+3. **FastAPI 서버 시작**
+   ```bash
+   py -m uvicorn app.main:app --reload
    ```
 
-3. **File Search Store 오류**: `data/file_search_store_info.json` 파일이 있는지 확인하세요.
-   - 없다면: `py scripts/setup_file_search.py --mode main` 실행
+### 서비스 상태 확인
 
-4. **캐릭터 페르소나 생성 오류**: 
-   - File Search Store가 설정되어 있는지 확인
-   - `data/char_graph/` 폴더에 인물 관계도 JSON 파일이 있는지 확인
-   - `data/origin_txt/saved_books_info.json` 파일이 있는지 확인
-
-### API 할당량 초과 시
-- 자동으로 다음 API 키로 전환됩니다.
-- 모든 키가 할당량을 초과하면 에러 메시지가 표시됩니다.
-- 잠시 후 다시 시도하세요.
-
-## 🛑 서버 종료
-
-서버를 종료하려면:
-- 터미널에서 `Ctrl + C` 누르기
-
-또는 PowerShell에서:
-```powershell
-Stop-Process -Name "python" -Force
-```
-
-## 📝 참고사항
-
-- `--reload` 옵션은 코드 변경 시 자동으로 서버를 재시작합니다.
-- 프로덕션 환경에서는 `--reload` 옵션을 제거하세요.
-- API 키는 자동으로 로테이션되며, 할당량 초과 시 다음 키로 전환됩니다.
-
+- **FastAPI**: http://localhost:8000/health
+- **API 문서**: http://localhost:8000/docs
+- **메트릭**: http://localhost:8000/api/metrics

@@ -2,6 +2,8 @@
 
 **책 속 인물과 대화하고 "What If" 시나리오를 탐험하는 AI 챗봇** (Gemini File Search 기반)
 
+> **Note**: 이 프로젝트는 마이크로서비스 아키텍처(MSA)의 일부입니다. Spring Boot 백엔드와 통신하여 웹 서비스를 제공합니다.
+
 ## 🎭 프로젝트 소개
 
 이 프로젝트는 Gemini의 File Search 기능을 활용하여 사용자가 책 속 등장인물과 몰입감 있는 대화를 나눌 수 있는 AI 챗봇 서비스입니다. 또한 "What If" 시나리오를 생성하여 캐릭터의 속성, 사건, 배경을 변경한 대체 타임라인을 탐험할 수 있습니다.
@@ -129,10 +131,14 @@ uvicorn app.main:app --reload
 
 ## 📡 API 사용법
 
+### Base URL
+- **FastAPI**: `http://localhost:8000/api`
+- **API 문서**: `http://localhost:8000/docs` (Swagger UI)
+
 ### 1. 캐릭터 목록 조회
 
 ```http
-GET /character/list
+GET /api/ai/characters
 ```
 
 **응답**:
@@ -149,19 +155,25 @@ GET /character/list
 }
 ```
 
-### 2. 캐릭터와 대화
+### 2. 캐릭터 정보 조회
 
 ```http
-POST /character/chat
+GET /api/ai/characters/info/{character_name}?book_title=Frankenstein
+```
+
+### 3. AI 캐릭터와 대화
+
+```http
+POST /api/ai/conversations/{conversation_id}/messages
 Content-Type: application/json
 
 {
   "character_name": "Victor Frankenstein",
   "message": "당신의 창조물에 대해 어떻게 생각하시나요?",
   "conversation_history": [],  // 선택사항
-  "conversation_id": null,  // 이어서 대화 시 기존 ID
   "conversation_partner_type": "stranger",  // "stranger" 또는 "other_main_character"
-  "other_main_character": null  // conversation_partner_type이 "other_main_character"일 때 필수
+  "other_main_character": null,  // conversation_partner_type이 "other_main_character"일 때 필수
+  "output_language": "ko"  // "ko" 또는 "en"
 }
 ```
 
@@ -171,18 +183,13 @@ Content-Type: application/json
   "response": "아... 제 창조물이라니. 그것은 제 인생 최대의 실수였습니다...",
   "character_name": "Victor Frankenstein",
   "book_title": "Frankenstein; Or, The Modern Prometheus",
-  "conversation_id": "conv_123",  // 임시 대화 ID (5턴 연속 대화 가능)
-  "turn_count": 1,
-  "max_turns": 5,
-  "grounding_metadata": {
-    "citations": [...]
-  }
+  "output_language": "ko"
 }
 ```
 
 **참고**:
-- 기본 캐릭터 대화도 임시 대화 저장 기능 지원 (최대 5턴 연속 대화)
-- `conversation_id`를 사용하여 대화를 이어갈 수 있음
+- `conversation_id`는 UUID 형식으로 생성하거나 기존 ID를 사용
+- 기본 캐릭터 대화는 임시 대화 저장 기능 지원 (최대 5턴 연속 대화)
 - 시나리오 대화와 달리 최종 저장/취소 기능은 없음 (5턴 후 자동 만료)
 
 
@@ -191,7 +198,7 @@ Content-Type: application/json
 ### 1. 시나리오 생성
 
 ```http
-POST /scenario/create?creator_id={user_id}
+POST /api/scenarios?creator_id={user_id}
 Content-Type: application/json
 
 {
@@ -231,7 +238,7 @@ Content-Type: application/json
 시나리오 대화는 하나의 통합 엔드포인트로 처리됩니다:
 
 ```http
-POST /scenario/{scenario_id}/chat?creator_id={user_id}
+POST /api/scenarios/{scenario_id}/chat?creator_id={user_id}
 Content-Type: application/json
 
 {
@@ -294,7 +301,7 @@ Content-Type: application/json
 ### 5. 공개 시나리오 목록 조회
 
 ```http
-GET /scenario/public?book_title=Pride and Prejudice&character_name=Elizabeth Bennet&sort=popular
+GET /api/scenarios?book_title=Pride and Prejudice&character_name=Elizabeth Bennet&sort=popular
 ```
 
 **응답**:
@@ -318,7 +325,7 @@ GET /scenario/public?book_title=Pride and Prejudice&character_name=Elizabeth Ben
 ### 6. 시나리오 상세 조회
 
 ```http
-GET /scenario/{scenario_id}
+GET /api/scenarios/{id}
 ```
 
 **응답**:
@@ -341,7 +348,7 @@ GET /scenario/{scenario_id}
 시나리오 Fork는 시나리오 복사만 처리하며, 대화는 별도 엔드포인트에서 시작합니다:
 
 ```http
-POST /scenario/{scenario_id}/fork
+POST /api/scenarios/{id}/fork
 Content-Type: application/json
 
 {
@@ -353,9 +360,15 @@ Content-Type: application/json
 **응답**:
 ```json
 {
-  "forked_scenario_id": "forked_scenario_456",
-  "original_scenario_id": "scenario_123",
-  "message": "시나리오를 fork했습니다. 대화를 시작하려면 /scenario/fork/{forked_scenario_id}/chat 엔드포인트를 사용하세요."
+  "id": "forked_scenario_456",
+  "base_story": "The Adventures of Sherlock Holmes",
+  "parent_scenario_id": "scenario_123",
+  "scenario_type": "CHARACTER_CHANGE",
+  "parameters": {...},
+  "quality_score": 0.0,
+  "creator_id": "user_123",
+  "fork_count": 0,
+  "created_at": "2025-11-28T06:14:11.202282Z"
 }
 ```
 
@@ -368,7 +381,7 @@ Content-Type: application/json
 Fork된 시나리오 대화도 하나의 통합 엔드포인트로 처리됩니다:
 
 ```http
-POST /scenario/fork/{forked_scenario_id}/chat?user_id={user_id}
+POST /api/scenarios/{scenario_id}/fork/{forked_scenario_id}/chat?user_id={user_id}
 Content-Type: application/json
 
 {
@@ -388,7 +401,7 @@ Content-Type: application/json
 
 **대화 이어가기**:
 ```http
-POST /scenario/fork/{forked_scenario_id}/chat?user_id={user_id}
+POST /api/scenarios/{scenario_id}/fork/{forked_scenario_id}/chat?user_id={user_id}
 Content-Type: application/json
 
 {
@@ -399,7 +412,7 @@ Content-Type: application/json
 
 **대화 저장/취소 (5턴 완료 후)**:
 ```http
-POST /scenario/fork/{forked_scenario_id}/chat?user_id={user_id}
+POST /api/scenarios/{scenario_id}/fork/{forked_scenario_id}/chat?user_id={user_id}
 Content-Type: application/json
 
 {
@@ -413,41 +426,59 @@ Content-Type: application/json
 ```
 rag-chatbot_test/
 ├── app/
-│   ├── main.py                          # FastAPI 메인
+│   ├── main.py                          # FastAPI 메인 애플리케이션
+│   ├── config/
+│   │   ├── settings.py                  # 환경 변수 설정 (Pydantic)
+│   │   ├── celery_app.py                # Celery 설정
+│   │   └── redis_client.py              # Redis 클라이언트 (태스크 상태)
+│   ├── middleware/
+│   │   └── correlation_id.py            # Correlation ID 미들웨어
 │   ├── routers/
-│   │   ├── character_chat.py            # 캐릭터 대화 API
-│   │   ├── scenario.py                   # What If 시나리오 API
-│   │   └── chat.py                      # 레거시 RAG API
-│   └── services/
-│       ├── base_chat_service.py         # 기본 대화 서비스 (공통 API 호출 로직)
-│       ├── character_data_loader.py     # 캐릭터 데이터 로더 (유틸리티)
-│       ├── character_chat_service.py    # 캐릭터 대화 서비스
-│       ├── scenario_management_service.py # 시나리오 관리 서비스
-│       ├── scenario_chat_service.py     # 시나리오 대화 서비스
-│       ├── api_key_manager.py           # API 키 관리
-│       ├── rag_service.py               # 레거시 RAG 서비스
-│       └── question_classifier.py       # 질문 분류기
+│   │   ├── character_chat.py            # 캐릭터 대화 API (/api/ai/*)
+│   │   ├── scenario.py                  # What If 시나리오 API (/api/scenarios/*)
+│   │   ├── novel_ingestion.py           # 소설 임베딩 API (/api/ai/novels/*)
+│   │   ├── semantic_search.py           # 의미 검색 API (/api/ai/search/*)
+│   │   ├── character_extraction.py      # 캐릭터 추출 API (/api/ai/characters/extract)
+│   │   ├── tasks.py                     # 비동기 작업 상태 API (/api/tasks/*)
+│   │   └── metrics.py                   # 메트릭 조회 API (/api/metrics)
+│   ├── services/
+│   │   ├── base_chat_service.py         # 기본 대화 서비스 (공통 API 호출 로직)
+│   │   ├── character_data_loader.py     # 캐릭터 데이터 로더 (유틸리티)
+│   │   ├── character_chat_service.py    # 캐릭터 대화 서비스
+│   │   ├── scenario_management_service.py # 시나리오 관리 서비스
+│   │   ├── scenario_chat_service.py     # 시나리오 대화 서비스
+│   │   ├── character_extractor.py       # 캐릭터 추출 서비스 (chargraph 통합)
+│   │   ├── api_key_manager.py           # API 키 관리
+│   │   └── vectordb_client.py           # VectorDB 클라이언트 (ChromaDB)
+│   ├── tasks/
+│   │   ├── novel_ingestion.py           # 소설 임베딩 Celery 태스크
+│   │   └── character_extraction.py      # 캐릭터 추출 Celery 태스크
+│   └── utils/
+│       ├── metrics.py                   # 메트릭 수집 유틸리티
+│       └── redis_client.py              # Redis 클라이언트 (Long Polling)
 ├── scripts/
 │   ├── collect_data.py                  # 책 검색 및 저장
 │   ├── setup_file_search.py             # File Search Store 설정
 │   ├── generate_character_personas.py   # 캐릭터 페르소나 자동 생성
-│   ├── download_dataset.py              # 데이터셋 다운로드
-│   ├── preprocess_text.py               # 텍스트 전처리 (레거시)
-│   └── import_to_chromadb.py            # ChromaDB 임포트 (레거시)
-├── gradio_test/
-│   ├── app.py                           # Gradio UI (What If 시나리오 테스트)
-│   └── requirements.txt                 # Gradio 의존성
+│   ├── embed_novels_to_vectordb.py      # 소설 임베딩 스크립트
+│   ├── check_vectordb.py                # VectorDB 데이터 확인
+│   ├── convert_to_csv.py                # 데이터셋 → CSV 변환
+│   ├── start_celery_worker.bat          # Celery 워커 시작 (Windows)
+│   └── start_redis.bat                  # Redis 시작 (Windows)
 ├── data/
 │   ├── origin_txt/                      # 원본 책 텍스트
 │   ├── origin_dataset/                  # 다운로드된 데이터셋
 │   ├── cache/                           # 메타데이터 캐시
 │   ├── characters/                      # 책별 캐릭터 페르소나 (자동 생성)
 │   ├── char_graph/                      # 인물 관계도 JSON 파일
+│   ├── scenarios/                       # 시나리오 데이터 (public/private/forked)
 │   ├── characters.json                  # 캐릭터 정보 (레거시)
 │   └── file_search_store_info.json      # File Search Store 정보
-├── convert_to_csv.py                    # 데이터셋 → CSV 변환
-├── test_character_chat.py               # 터미널 테스트
+├── chroma_data/                         # ChromaDB 데이터 저장소
 ├── requirements.txt                     # 패키지 목록
+├── pytest.ini                           # Pytest 설정
+├── docker-compose.yml                   # Docker Compose 설정
+├── Dockerfile.dev                       # 개발용 Dockerfile
 ├── .env                                 # 환경 변수
 └── README.md                            # 이 파일
 ```
@@ -456,8 +487,12 @@ rag-chatbot_test/
 
 ### 백엔드
 - **FastAPI**: 고성능 웹 프레임워크
-- **Gemini 2.0 Flash**: Google의 최신 AI 모델
+- **Gemini 2.5 Flash**: Google의 최신 AI 모델
 - **File Search**: Gemini의 RAG 기능 (자동 임베딩 + 벡터 검색)
+- **Celery**: 비동기 작업 처리
+- **Redis**: Celery 브로커 및 Long Polling 저장소
+- **ChromaDB**: VectorDB (개발 환경)
+- **Pinecone**: VectorDB (프로덕션 환경, 선택)
 
 ### 데이터
 - **Gutenberg Project**: 고전 문학 작품 48,000+ 권
@@ -468,25 +503,28 @@ rag-chatbot_test/
 - `google-genai`: Gemini 새 SDK
 - `python-dotenv`: 환경 변수 관리
 - `datasets`: Hugging Face 데이터셋
+- `structlog`: 구조화된 로깅
+- `pydantic-settings`: 환경 변수 타입 안전 관리
+- `httpx`: 비동기 HTTP 클라이언트 (Spring Boot 통신용)
+- `celery`: 비동기 작업 큐
+- `redis`: 인메모리 데이터 저장소
 
 ## 📊 시스템 아키텍처
 
-### 기존 시스템 (v1.0) - 레거시
-```
-사용자 질문
-    ↓
-텍스트 전처리
-    ↓
-로컬 임베딩 생성 (Gemini)
-    ↓
-ChromaDB 벡터 검색
-    ↓
-관련 문서 추출
-    ↓
-Gemini로 답변 생성
-```
+### 마이크로서비스 아키텍처 (MSA)
 
-### 새로운 시스템 (v2.0) - 현재
+이 프로젝트는 **마이크로서비스 아키텍처**를 사용합니다:
+
+- **Spring Boot (Port 8080)**: PostgreSQL ONLY (메타데이터, 사용자 데이터, 소셜 기능)
+- **FastAPI (Port 8000)**: VectorDB ONLY (소설 콘텐츠, 임베딩, 의미 검색)
+
+**통신 패턴**:
+- **Pattern B (API Gateway)**: 프론트엔드는 Spring Boot만 호출, Spring Boot가 FastAPI로 프록시
+- **Internal APIs**: 서비스 간 통신용 내부 API
+  - Spring Boot → FastAPI: `/api/ai/*` (VectorDB 쿼리)
+  - FastAPI → Spring Boot: `/api/internal/*` (PostgreSQL 메타데이터)
+
+### AI 대화 시스템 (v2.0) - 현재
 ```
 사용자 질문
     ↓
@@ -595,19 +633,23 @@ ScenarioChatService (BaseChatService 상속)
 import requests
 
 # 캐릭터 목록 조회
-response = requests.get("http://localhost:8000/character/list")
+response = requests.get("http://localhost:8000/api/ai/characters")
 characters = response.json()['characters']
 print(f"사용 가능한 캐릭터: {len(characters)}명")
 
 # Victor Frankenstein과 대화
+import uuid
+conversation_id = str(uuid.uuid4())  # 새 대화 ID 생성
+
 chat_request = {
     "character_name": "Victor Frankenstein",
     "message": "당신의 실험에 대해 말씀해주세요.",
-    "conversation_history": []
+    "conversation_history": [],
+    "output_language": "ko"
 }
 
 response = requests.post(
-    "http://localhost:8000/character/chat",
+    f"http://localhost:8000/api/ai/conversations/{conversation_id}/messages",
     json=chat_request
 )
 
@@ -640,7 +682,7 @@ scenario_request = {
 }
 
 response = requests.post(
-    "http://localhost:8000/scenario/create?creator_id=default_user",
+    "http://localhost:8000/api/scenarios?creator_id=default_user",
     json=scenario_request
 )
 scenario = response.json()
@@ -659,7 +701,7 @@ conversation_request = {
 }
 
 response = requests.post(
-    f"http://localhost:8000/scenario/{scenario_id}/chat?creator_id=default_user",
+    f"http://localhost:8000/api/scenarios/{scenario_id}/chat?creator_id=default_user",
     json=conversation_request
 )
 result = response.json()
@@ -674,7 +716,7 @@ continue_request = {
 }
 
 response = requests.post(
-    f"http://localhost:8000/scenario/{scenario_id}/chat?creator_id=default_user",
+    f"http://localhost:8000/api/scenarios/{scenario_id}/chat?creator_id=default_user",
     json=continue_request
 )
 result = response.json()
@@ -690,14 +732,14 @@ confirm_request = {
 }
 
 response = requests.post(
-    f"http://localhost:8000/scenario/{scenario_id}/chat?creator_id=default_user",
+    f"http://localhost:8000/api/scenarios/{scenario_id}/chat?creator_id=default_user",
     json=confirm_request
 )
 print(response.json()['message'])
 
 # 5. 공개 시나리오 조회
 response = requests.get(
-    "http://localhost:8000/scenario/public",
+    "http://localhost:8000/api/scenarios",
     params={"sort": "popular"}
 )
 scenarios = response.json()['scenarios']
@@ -713,11 +755,11 @@ fork_request = {
 }
 
 response = requests.post(
-    f"http://localhost:8000/scenario/{scenarios[0]['scenario_id']}/fork",
+    f"http://localhost:8000/api/scenarios/{scenarios[0]['scenario_id']}/fork",
     json=fork_request
 )
 forked = response.json()
-forked_scenario_id = forked['forked_scenario_id']
+forked_scenario_id = forked['id']
 print(f"Fork된 시나리오 ID: {forked_scenario_id}")
 
 # 7. Fork된 시나리오 대화 시작 (conversation_partner_type은 Fork 시 저장된 값 사용)
@@ -726,7 +768,7 @@ forked_chat_request = {
 }
 
 response = requests.post(
-    f"http://localhost:8000/scenario/fork/{forked_scenario_id}/chat?user_id=default_user",
+    f"http://localhost:8000/api/scenarios/{scenarios[0]['scenario_id']}/fork/{forked_scenario_id}/chat?user_id=default_user",
     json=forked_chat_request
 )
 result = response.json()
@@ -738,19 +780,23 @@ print(f"턴: {result['turn_count']}/{result['max_turns']}")
 
 ```bash
 # 캐릭터 목록
-curl http://localhost:8000/character/list
+curl http://localhost:8000/api/ai/characters
+
+# 캐릭터 정보 조회
+curl http://localhost:8000/api/ai/characters/info/Victor%20Frankenstein?book_title=Frankenstein
 
 # 캐릭터 대화
-curl -X POST http://localhost:8000/character/chat \
+curl -X POST http://localhost:8000/api/ai/conversations/{conversation_id}/messages \
   -H "Content-Type: application/json" \
   -d '{
     "character_name": "Elizabeth Bennet",
     "message": "안녕하세요!",
-    "conversation_history": []
+    "conversation_history": [],
+    "output_language": "ko"
   }'
 
 # 시나리오 생성
-curl -X POST "http://localhost:8000/scenario/create?creator_id=default_user" \
+curl -X POST "http://localhost:8000/api/scenarios?creator_id=default_user" \
   -H "Content-Type: application/json" \
   -d '{
     "scenario_name": "셜록홈즈가 현대사회에서 활동한다면?",
@@ -771,7 +817,7 @@ curl -X POST "http://localhost:8000/scenario/create?creator_id=default_user" \
   }'
 
 # 시나리오 대화 시작
-curl -X POST "http://localhost:8000/scenario/{scenario_id}/chat?creator_id=default_user" \
+curl -X POST "http://localhost:8000/api/scenarios/{scenario_id}/chat?creator_id=default_user" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "안녕하세요? 제가 누군지 아시나요?",
@@ -783,21 +829,33 @@ curl -X POST "http://localhost:8000/scenario/{scenario_id}/chat?creator_id=defau
   }'
 
 # 공개 시나리오 목록
-curl "http://localhost:8000/scenario/public?sort=popular"
+curl "http://localhost:8000/api/scenarios?sort=popular"
+
+# 시나리오 상세 조회
+curl "http://localhost:8000/api/scenarios/{id}"
 
 # 시나리오 Fork
-curl -X POST "http://localhost:8000/scenario/{scenario_id}/fork" \
+curl -X POST "http://localhost:8000/api/scenarios/{id}/fork" \
   -H "Content-Type: application/json" \
   -d '{
     "conversation_partner_type": "stranger"
   }'
 
 # Fork된 시나리오 대화
-curl -X POST "http://localhost:8000/scenario/fork/{forked_scenario_id}/chat?user_id=default_user" \
+curl -X POST "http://localhost:8000/api/scenarios/{scenario_id}/fork/{forked_scenario_id}/chat?user_id=default_user" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "안녕하세요!"
   }'
+
+# 헬스 체크
+curl http://localhost:8000/health
+
+# 메트릭 조회
+curl http://localhost:8000/api/metrics
+
+# 작업 상태 조회
+curl http://localhost:8000/api/tasks/{task_id}/status
 ```
 
 ## 🔐 보안 및 제한사항
@@ -896,9 +954,62 @@ data/characters/
 
 ## 📈 향후 계획
 
+### 완료된 기능 ✅
 - [x] 캐릭터 페르소나 자동 생성 (File Search 기반)
 - [x] 서비스 아키텍처 최적화 (BaseChatService, CharacterDataLoader)
 - [x] 대화 상대 선택 기능 (제3의 인물 / 다른 주인공)
+- [x] API 경로 표준화 (`/api/ai/*`, `/api/scenarios/*`)
+- [x] 비동기 작업 처리 (Celery + Redis)
+- [x] 캐릭터 추출 기능 (chargraph 통합)
+- [x] 메트릭 수집 및 헬스 체크
+
+### Spring Boot 통신 통합 (TODO) 🔧
+
+#### Phase 1: 기본 통신 (필수)
+- [ ] **Spring Boot Internal API 클라이언트 구현**
+  - `httpx.AsyncClient`를 사용한 Spring Boot `/api/internal/*` 호출
+  - Internal API 인증 토큰 처리
+  - 재시도 로직 및 에러 처리
+  
+- [ ] **인증/인가 미들웨어 추가**
+  - JWT 토큰 검증 미들웨어
+  - Spring Boot에서 전달받은 토큰 검증
+  - 사용자 정보 추출 및 의존성 주입
+  
+- [ ] **시나리오 CRUD를 Spring Boot로 위임**
+  - 시나리오 생성/조회/수정/삭제를 Spring Boot API로 호출
+  - FastAPI는 AI 대화 기능만 담당
+
+#### Phase 2: 데이터 동기화 (필수)
+- [ ] **시나리오 메타데이터를 PostgreSQL로 이동**
+  - 현재 파일 시스템 저장 → PostgreSQL 저장으로 전환
+  - Spring Boot의 시나리오 관리 API 활용
+  
+- [ ] **FastAPI는 VectorDB만 관리**
+  - 소설 임베딩, 캐릭터 추출, 의미 검색만 담당
+  - 메타데이터는 Spring Boot에서 관리
+  
+- [ ] **Spring Boot ↔ FastAPI 간 데이터 동기화 로직**
+  - 소설 임베딩 시 Spring Boot에 메타데이터 저장
+  - 캐릭터 추출 시 Spring Boot에 캐릭터 정보 저장
+
+#### Phase 3: 개선 (권장)
+- [ ] **응답 형식 표준화**
+  - 공통 응답 래퍼 클래스 구현
+  - 에러 응답 형식 통일
+  - API 문서와 일치하는 응답 형식
+  
+- [ ] **에러 처리 개선**
+  - 표준화된 에러 코드
+  - 상세한 에러 메시지
+  - 로깅 강화
+  
+- [ ] **로깅 및 모니터링 강화**
+  - Correlation ID 추적
+  - 성능 메트릭 수집
+  - 분산 추적 시스템 통합
+
+### 기능 확장 (선택)
 - [ ] 더 많은 캐릭터 추가
 - [ ] 음성 대화 기능
 - [ ] 감정 분석 및 반영
