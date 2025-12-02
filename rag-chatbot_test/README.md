@@ -173,7 +173,7 @@ Content-Type: application/json
   "scenario_name": "헤르미온이가 슬리데린에 배정되었다면?",
   "book_title": "Pride and Prejudice",
   "character_name": "Elizabeth Bennet",
-  "is_public": false,
+  "is_private": false,
   "character_property_changes": {
     "enabled": true,
     "description": "그리핀도르 대신 슬리데린에 배정되고, 야망이 더 강해짐"
@@ -196,7 +196,7 @@ Content-Type: application/json
   "book_title": "Pride and Prejudice",
   "character_name": "Elizabeth Bennet",
   "creator_id": "default_user",
-  "is_public": false,
+  "is_private": false,
   "created_at": "2024-01-01T00:00:00Z"
 }
 ```
@@ -535,7 +535,7 @@ scenario_request = {
     "scenario_name": "헤르미온이가 슬리데린에 배정되었다면?",
     "book_title": "Pride and Prejudice",
     "character_name": "Elizabeth Bennet",
-    "is_public": False,
+    "is_private": False,
     "character_property_changes": {
         "enabled": True,
         "description": "그리핀도르 대신 슬리데린에 배정되고, 야망이 더 강해짐"
@@ -632,7 +632,7 @@ curl -X POST http://localhost:8000/scenario/create \
     "scenario_name": "헤르미온이가 슬리데린에 배정되었다면?",
     "book_title": "Pride and Prejudice",
     "character_name": "Elizabeth Bennet",
-    "is_public": false,
+    "is_private": false,
     "character_property_changes": {
       "enabled": true,
       "description": "그리핀도르 대신 슬리데린에 배정되고, 야망이 더 강해짐"

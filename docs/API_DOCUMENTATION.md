@@ -308,7 +308,6 @@ Create a new What If scenario.
     "change_point": "Sorting Hat ceremony",
     "ripple_effects": ["Different friend group", "Changed house dynamics"]
   },
-  "quality_score": 0.0,
   "creator_id": "550e8400-e29b-41d4-a716-446655440000",
   "fork_count": 0,
   "conversation_count": 0,
@@ -346,7 +345,6 @@ Retrieve single scenario by ID.
     "property": "house",
     "new_value": "Slytherin"
   },
-  "quality_score": 0.85,
   "creator": {
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "username": "hermione_fan",
@@ -375,20 +373,19 @@ List scenarios with pagination and optional filtering.
 
 #### Query Parameters
 
-| Parameter       | Type    | Default           | Description                 |
-| --------------- | ------- | ----------------- | --------------------------- |
-| `page`          | integer | 0                 | Page number (0-indexed)     |
-| `size`          | integer | 20                | Items per page (max 100)    |
-| `base_story`    | string  | -                 | Filter by base story        |
-| `scenario_type` | string  | -                 | Filter by type              |
-| `min_quality`   | decimal | -                 | Min quality score (0.0-1.0) |
-| `creator_id`    | UUID    | -                 | Filter by creator           |
-| `sort`          | string  | `created_at,desc` | Sort field and direction    |
+| Parameter       | Type    | Default           | Description              |
+| --------------- | ------- | ----------------- | ------------------------ |
+| `page`          | integer | 0                 | Page number (0-indexed)  |
+| `size`          | integer | 20                | Items per page (max 100) |
+| `base_story`    | string  | -                 | Filter by base story     |
+| `scenario_type` | string  | -                 | Filter by type           |
+| `creator_id`    | UUID    | -                 | Filter by creator        |
+| `sort`          | string  | `created_at,desc` | Sort field and direction |
 
 #### Example Request
 
 ```bash
-GET /api/scenarios?base_story=harry_potter&scenario_type=CHARACTER_CHANGE&min_quality=0.7&page=0&size=20&sort=quality_score,desc
+GET /api/scenarios?base_story=harry_potter&scenario_type=CHARACTER_CHANGE&page=0&size=20&sort=created_at,desc
 ```
 
 #### Response (200 OK)
@@ -1798,22 +1795,22 @@ Browse scenarios with advanced filtering.
 
 #### Query Parameters
 
-| Parameter       | Type    | Default          | Description                                                   |
-| --------------- | ------- | ---------------- | ------------------------------------------------------------- |
-| `q`             | string  | -                | Full-text search query (pg_trgm)                              |
-| `base_story`    | string  | -                | Filter by base story                                          |
-| `scenario_type` | string  | -                | Filter by type                                                |
-| `min_quality`   | decimal | -                | Min quality score (0.0-1.0)                                   |
-| `creator_id`    | UUID    | -                | Filter by creator                                             |
-| `has_forks`     | boolean | -                | Filter by fork status                                         |
-| `page`          | integer | 0                | Page number                                                   |
-| `size`          | integer | 20               | Items per page (max 100)                                      |
-| `sort`          | string  | `relevance,desc` | Sort field (relevance, quality_score, created_at, fork_count) |
+| Parameter       | Type    | Default          | Description                                    |
+| --------------- | ------- | ---------------- | ---------------------------------------------- |
+| `q`             | string  | -                | Full-text search query (pg_trgm)               |
+| `base_story`    | string  | -                | Filter by base story                           |
+| `scenario_type` | string  | -                | Filter by type                                 |
+| `min_quality`   | decimal | -                | Min quality score (0.0-1.0)                    |
+| `creator_id`    | UUID    | -                | Filter by creator                              |
+| `has_forks`     | boolean | -                | Filter by fork status                          |
+| `page`          | integer | 0                | Page number                                    |
+| `size`          | integer | 20               | Items per page (max 100)                       |
+| `sort`          | string  | `relevance,desc` | Sort field (relevance, created_at, fork_count) |
 
 #### Example Request
 
 ```bash
-GET /api/scenarios/search?q=hermione+slytherin&base_story=harry_potter&min_quality=0.7&sort=quality_score,desc
+GET /api/scenarios/search?q=hermione+slytherin&base_story=harry_potter&sort=relevance,desc
 ```
 
 #### Response (200 OK)
@@ -2271,7 +2268,7 @@ curl -X POST http://localhost:8080/api/scenarios \
 #### Search Scenarios
 
 ```bash
-curl -X GET "http://localhost:8080/api/scenarios/search?q=hermione+slytherin&min_quality=0.7&sort=quality_score,desc"
+curl -X GET "http://localhost:8080/api/scenarios/search?q=hermione+slytherin&sort=relevance,desc"
 ```
 
 #### Fork Conversation

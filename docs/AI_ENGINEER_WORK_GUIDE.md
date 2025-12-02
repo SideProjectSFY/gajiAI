@@ -433,21 +433,18 @@ class ScenarioValidator:
         validation_prompt = self._build_validation_prompt(scenario_data)
         response = self.gemini.generate(validation_prompt)
 
-        # 2. 품질 점수 파싱
-        quality_score = self._parse_quality_score(response)
+        # 2. 결과 파싱
         issues = self._extract_issues(response)
         suggestions = self._extract_suggestions(response)
 
         # 3. Redis 캐싱 (5분 TTL)
         cache_key = f"validation:{scenario_data['id']}"
         self.redis.setex(cache_key, 300, {
-            "quality_score": quality_score,
             "issues": issues,
             "suggestions": suggestions
         })
 
         return {
-            "quality_score": quality_score,
             "issues": issues,
             "suggestions": suggestions
         }

@@ -120,9 +120,9 @@ public boolean canAccessConversation(UUID conversationId, Authentication auth) {
     Conversation conversation = conversationRepository.findById(conversationId)
         .orElseThrow(() -> new ResourceNotFoundException("Conversation not found"));
 
-    // Check if user owns conversation OR conversation is public
+    // Check if user owns conversation OR conversation is not private
     String userId = ((JwtUser) auth.getPrincipal()).getId();
-    return conversation.getCreatorId().equals(userId) || conversation.isPublic();
+    return conversation.getCreatorId().equals(userId) || !conversation.isPrivate();
 }
 ```
 

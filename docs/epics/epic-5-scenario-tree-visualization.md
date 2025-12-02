@@ -151,7 +151,6 @@ Response (200 OK):
   "depth": 0,
   "fork_count": 3,
   "conversation_count": 42,
-  "quality_score": 85,
   "creator": {
     "username": "hermione_fan",
     "avatar_url": "https://..."
