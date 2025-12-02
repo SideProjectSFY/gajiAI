@@ -171,7 +171,7 @@ RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/scenario/cr
     "scenario_name": "Test Scenario",
     "book_title": "Harry Potter",
     "character_name": "Hermione Granger",
-    "is_public": false,
+    "is_private": false,
     "character_property_changes": {"house": "Slytherin"},
     "event_alterations": {},
     "setting_modifications": {}
