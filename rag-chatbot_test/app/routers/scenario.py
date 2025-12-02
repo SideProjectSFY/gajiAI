@@ -19,7 +19,7 @@ class ScenarioCreateRequest(BaseModel):
     scenario_name: str
     book_title: str
     character_name: str
-    is_public: bool = False
+    is_private: bool = False
     character_property_changes: Optional[Dict] = None
     event_alterations: Optional[Dict] = None
     setting_modifications: Optional[Dict] = None
@@ -95,7 +95,7 @@ async def create_scenario(
             character_name=request.character_name,
             descriptions=descriptions,
             creator_id=creator_id,
-            is_public=request.is_public
+            is_private=request.is_private
         )
         
         return result
