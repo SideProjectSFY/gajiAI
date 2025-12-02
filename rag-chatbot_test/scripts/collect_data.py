@@ -66,96 +66,7 @@ def load_local_dataset(dataset_path: str) -> Dataset:
         raise
 
 
-def calculate_text_quality_score(text: str, text_length: int, gutenberg_id: str) -> Tuple[float, Dict]:
-    """
-    텍스트 품질 점수 계산
-    
-    여러 기준을 종합하여 가장 완전하고 깨끗한 버전을 선택합니다.
-    
-    평가 기준:
-    1. 텍스트 길이 (긴 것이 더 완전함)
-    2. Gutenberg ID (낮을수록 오래된 원본, 더 신뢰도 높음)
-    3. 구조적 완성도 (Chapter, Letter 등 구조 요소)
-    4. 텍스트 품질 (특수문자, 깨진 문자 비율)
-    
-    Args:
-        text: 텍스트 내용
-        text_length: 텍스트 길이
-        gutenberg_id: Gutenberg ID
-    
-    Returns:
-        (품질 점수, 상세 정보)
-    """
-    scores = {}
-    
-    # 1. 길이 점수 (0-40점): 긴 것이 더 완전함
-    # 정규화: 100,000자 기준
-    length_score = min(40, (text_length / 100000) * 40)
-    scores['length'] = length_score
-    
-    # 2. ID 점수 (0-30점): 낮은 ID가 더 신뢰도 높음
-    # ID가 낮을수록 높은 점수 (10000 이하는 만점)
-    try:
-        id_num = int(gutenberg_id)
-        if id_num <= 10000:
-            id_score = 30
-        elif id_num <= 50000:
-            id_score = 20
-        else:
-            id_score = 10
-    except:
-        id_score = 5
-    scores['id'] = id_score
-    
-    # 3. 구조 점수 (0-20점): 목차, 챕터 구조가 있으면 더 완전함
-    structure_score = 0
-    
-    # 샘플링: 처음 5000자만 검사 (성능 최적화)
-    sample_text = text[:5000].lower()
-    
-    # 목차 존재 여부
-    if 'contents' in sample_text or 'table of contents' in sample_text:
-        structure_score += 5
-    
-    # Chapter 구조
-    chapter_pattern = r'chapter\s+\d+|chapter\s+[ivxlcdm]+'
-    chapter_count = len(re.findall(chapter_pattern, sample_text, re.IGNORECASE))
-    if chapter_count >= 3:
-        structure_score += 10
-    elif chapter_count >= 1:
-        structure_score += 5
-    
-    # Letter 구조 (서간체 소설)
-    letter_pattern = r'letter\s+\d+|letter\s+[ivxlcdm]+'
-    letter_count = len(re.findall(letter_pattern, sample_text, re.IGNORECASE))
-    if letter_count >= 2:
-        structure_score += 5
-    
-    scores['structure'] = min(20, structure_score)
-    
-    # 4. 품질 점수 (0-10점): 깨끗한 텍스트
-    quality_score = 10
-    
-    # 샘플링: 중간 1000자 검사
-    mid_start = len(text) // 2
-    quality_sample = text[mid_start:mid_start+1000]
-    
-    # 비정상적인 문자 비율 (제어문자, 과도한 특수문자)
-    control_chars = sum(1 for c in quality_sample if ord(c) < 32 and c not in '\n\r\t')
-    if control_chars > 10:
-        quality_score -= 5
-    
-    # 과도한 줄바꿈 (연속 3개 이상)
-    excessive_newlines = len(re.findall(r'\n{4,}', quality_sample))
-    if excessive_newlines > 5:
-        quality_score -= 2
-    
-    scores['quality'] = max(0, quality_score)
-    
-    # 총점 계산 (0-100점)
-    total_score = sum(scores.values())
-    
-    return total_score, scores
+
 
 
 def dataset_to_dataframe(ds: Dataset) -> pd.DataFrame:
@@ -213,14 +124,13 @@ def dataset_to_dataframe(ds: Dataset) -> pd.DataFrame:
     return df
 
 
-def search_books(df: pd.DataFrame, search_terms: List[str], dataset_path: str = None) -> pd.DataFrame:
+def search_books(df: pd.DataFrame, search_terms: List[str]) -> pd.DataFrame:
     """
-    책 제목으로 검색 (각 검색어당 품질이 가장 좋은 버전 선택)
+    책 제목으로 검색 (각 검색어당 텍스트 길이가 가장 긴 버전 선택)
     
     Args:
         df: 책 데이터 DataFrame
         search_terms: 검색어 리스트
-        dataset_path: 데이터셋 경로 (품질 분석용)
     
     Returns:
         검색 결과 DataFrame
@@ -242,56 +152,11 @@ def search_books(df: pd.DataFrame, search_terms: List[str], dataset_path: str = 
                 best_match = matched
                 print(f"    - [{best_match.iloc[0]['gutenberg_id']}] {best_match.iloc[0]['title']} by {best_match.iloc[0]['author']} ({best_match.iloc[0]['text_length']:,}자)")
             else:
-                # 여러 개면 품질 분석
-                print(f"    [분석] 여러 버전 발견, 품질 분석 중...")
-                
-                # 품질 점수 계산 (데이터셋 로드 필요)
-                if dataset_path:
-                    try:
-                        ds = load_local_dataset(dataset_path)
-                        
-                        quality_scores = []
-                        for _, row in matched.iterrows():
-                            book_index = int(row['index'])
-                            text = ds[book_index]['TEXT']
-                            score, details = calculate_text_quality_score(
-                                text, 
-                                row['text_length'], 
-                                row['gutenberg_id']
-                            )
-                            quality_scores.append({
-                                'index': row['index'],
-                                'gutenberg_id': row['gutenberg_id'],
-                                'score': score,
-                                'details': details
-                            })
-                        
-                        # 점수 순으로 정렬
-                        quality_scores.sort(key=lambda x: x['score'], reverse=True)
-                        
-                        # 최고 점수 선택
-                        best_id = quality_scores[0]['gutenberg_id']
-                        best_match = matched[matched['gutenberg_id'] == best_id]
-                        
-                        # 결과 출력
-                        print(f"    [품질 분석 결과]")
-                        for qs in quality_scores[:3]:  # 상위 3개만 표시
-                            row = matched[matched['gutenberg_id'] == qs['gutenberg_id']].iloc[0]
-                            marker = "★ 선택" if qs['gutenberg_id'] == best_id else "  "
-                            print(f"      {marker} ID {qs['gutenberg_id']:>6} | 점수: {qs['score']:.1f} | "
-                                  f"길이: {qs['details']['length']:.1f} | ID: {qs['details']['id']:.1f} | "
-                                  f"구조: {qs['details']['structure']:.1f} | 품질: {qs['details']['quality']:.1f}")
-                        
-                    except Exception as e:
-                        # 품질 분석 실패시 길이로 폴백
-                        print(f"    [경고] 품질 분석 실패, 텍스트 길이로 선택: {e}")
-                        matched_sorted = matched.sort_values('text_length', ascending=False)
-                        best_match = matched_sorted.iloc[0:1]
-                else:
-                    # dataset_path 없으면 길이로만 판단
-                    matched_sorted = matched.sort_values('text_length', ascending=False)
-                    best_match = matched_sorted.iloc[0:1]
-                    print(f"    - [{best_match.iloc[0]['gutenberg_id']}] {best_match.iloc[0]['title']} (텍스트 길이 기준)")
+                # 여러 개면 텍스트 길이로 선택
+                print("    [분석] 여러 버전 발견, 텍스트 길이로 선택 중...")
+                matched_sorted = matched.sort_values('text_length', ascending=False)
+                best_match = matched_sorted.iloc[0:1]
+                print(f"    - [{best_match.iloc[0]['gutenberg_id']}] {best_match.iloc[0]['title']} (텍스트 길이 기준)")
             
             results.append(best_match)
         else:
@@ -381,7 +246,7 @@ def save_books_to_txt(df: pd.DataFrame, output_dir: str, dataset_path: str) -> L
             with open(info_path, "r", encoding="utf-8") as f:
                 existing_data = json.load(f)
                 existing_books = existing_data.get("books", [])
-        except:
+        except Exception:
             pass
     
     # 중복 제거 (gutenberg_id 기준)
@@ -476,8 +341,8 @@ def main():
         df.to_csv(csv_path, index=False, encoding='utf-8-sig')
         print(f"[저장] CSV 저장 완료: {csv_path}")
     
-    # 책 검색 (품질 분석 포함)
-    result_df = search_books(df, args.search, args.dataset_path)
+    # 책 검색 (텍스트 길이 기준)
+    result_df = search_books(df, args.search)
     
     if len(result_df) == 0:
         print("\n[종료] 검색 결과가 없습니다.")
@@ -495,7 +360,7 @@ def main():
     saved_books = save_books_to_txt(result_df, args.output, args.dataset_path)
     
     print(f"\n{'='*60}")
-    print(f"작업 완료!")
+    print("작업 완료!")
     print(f"  - 검색된 책: {len(result_df)}개")
     print(f"  - 저장된 책: {len(saved_books)}개")
     print(f"  - 저장 위치: {args.output}")
