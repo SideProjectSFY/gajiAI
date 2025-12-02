@@ -128,6 +128,141 @@ class RedisClient:
         """연결 종료"""
         if self.is_available and self.client:
             await self.client.close()
+    
+    async def set_task_status(self, conversation_id: str, status: str, ttl: int = 600):
+        """
+        Set task status
+        
+        Args:
+            conversation_id: Conversation ID
+            status: queued|processing|completed|failed
+            ttl: TTL in seconds (default 600)
+        """
+        if not self.is_available:
+            return
+        
+        try:
+            await self.client.setex(
+                f"task:{conversation_id}:status",
+                ttl,
+                status
+            )
+        except Exception as e:
+            logger.error("redis_set_status_error", error=str(e), conversation_id=conversation_id)
+    
+    async def get_task_status_only(self, conversation_id: str) -> Optional[str]:
+        """
+        Get task status only
+        
+        Returns:
+            Status string or None if not found
+        """
+        if not self.is_available:
+            return None
+        
+        try:
+            status = await self.client.get(f"task:{conversation_id}:status")
+            return status
+        except Exception as e:
+            logger.error("redis_get_status_error", error=str(e), conversation_id=conversation_id)
+            return None
+    
+    async def set_task_content(self, conversation_id: str, content: str, ttl: int = 600):
+        """
+        Set task content
+        
+        Args:
+            conversation_id: Conversation ID
+            content: Generated content
+            ttl: TTL in seconds (default 600)
+        """
+        if not self.is_available:
+            return
+        
+        try:
+            await self.client.setex(
+                f"task:{conversation_id}:content",
+                ttl,
+                content
+            )
+        except Exception as e:
+            logger.error("redis_set_content_error", error=str(e), conversation_id=conversation_id)
+    
+    async def get_task_content(self, conversation_id: str) -> Optional[str]:
+        """
+        Get task content
+        
+        Returns:
+            Content string or None if not found
+        """
+        if not self.is_available:
+            return None
+        
+        try:
+            content = await self.client.get(f"task:{conversation_id}:content")
+            return content
+        except Exception as e:
+            logger.error("redis_get_content_error", error=str(e), conversation_id=conversation_id)
+            return None
+    
+    async def set_task_error(self, conversation_id: str, error: str, ttl: int = 600):
+        """
+        Set task error
+        
+        Args:
+            conversation_id: Conversation ID
+            error: Error message
+            ttl: TTL in seconds (default 600)
+        """
+        if not self.is_available:
+            return
+        
+        try:
+            await self.client.setex(
+                f"task:{conversation_id}:error",
+                ttl,
+                error
+            )
+        except Exception as e:
+            logger.error("redis_set_error_error", error=str(e), conversation_id=conversation_id)
+    
+    async def get_task_error(self, conversation_id: str) -> Optional[str]:
+        """
+        Get task error
+        
+        Returns:
+            Error string or None if not found
+        """
+        if not self.is_available:
+            return None
+        
+        try:
+            error = await self.client.get(f"task:{conversation_id}:error")
+            return error
+        except Exception as e:
+            logger.error("redis_get_error_error", error=str(e), conversation_id=conversation_id)
+            return None
+    
+    async def clear_task(self, conversation_id: str):
+        """
+        Clear all task keys
+        
+        Args:
+            conversation_id: Conversation ID
+        """
+        if not self.is_available:
+            return
+        
+        try:
+            keys = [
+                f"task:{conversation_id}:status",
+                f"task:{conversation_id}:content",
+                f"task:{conversation_id}:error"
+            ]
+            await self.client.delete(*keys)
+            logger.info("task_keys_cleared", conversation_id=conversation_id)
+        except Exception as e:
+            logger.error("redis_clear_error", error=str(e), conversation_id=conversation_id)
 
 
 # Global Redis client instance
