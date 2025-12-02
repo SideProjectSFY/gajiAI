@@ -70,7 +70,7 @@ class ScenarioManagementService:
         character_name: str,
         descriptions: Dict[str, str],  # 자연어 설명
         creator_id: str,
-        is_public: bool = False
+        is_private: bool = False
     ) -> Dict:
         """
         시나리오 생성
@@ -84,7 +84,7 @@ class ScenarioManagementService:
                 - event_alterations: 사건 변경 설명
                 - setting_modifications: 배경 변경 설명
             creator_id: 생성자 ID
-            is_public: 공개 여부
+            is_private: 비공개 여부
         
         Returns:
             생성된 시나리오 정보
@@ -140,7 +140,7 @@ class ScenarioManagementService:
             "book_title": book_title,
             "character_name": character_name,
             "creator_id": creator_id,
-            "is_public": is_public,
+            "is_private": is_private,
             "fork_count": 0,
             "like_count": 0,
             "created_at": datetime.utcnow().isoformat() + "Z",
@@ -715,7 +715,7 @@ Use File Search to find relevant information from the source material, then outp
         """시나리오를 파일에 저장"""
         scenario_id = scenario["scenario_id"]
         
-        if scenario["is_public"]:
+        if not scenario["is_private"]:
             # 공개 시나리오
             file_path = self.public_scenarios_dir / f"{scenario_id}.json"
         else:
@@ -768,7 +768,7 @@ Use File Search to find relevant information from the source material, then outp
         
         scenario["updated_at"] = datetime.utcnow().isoformat() + "Z"
         
-        if scenario["is_public"]:
+        if not scenario["is_private"]:
             file_path = self.public_scenarios_dir / f"{scenario_id}.json"
         else:
             file_path = self.private_scenarios_dir / creator_id / f"{scenario_id}.json"
