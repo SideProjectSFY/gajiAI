@@ -91,7 +91,7 @@ def create_scenario(
     event_alteration_desc,
     setting_modification_enabled,
     setting_modification_desc,
-    is_public
+    is_private
 ):
     """시나리오 생성"""
     global current_scenario_id, current_conversation_id, current_turn_count
@@ -133,7 +133,7 @@ def create_scenario(
             character_name=character_name,
             descriptions=descriptions,
             creator_id="gradio_user",
-            is_public=is_public
+            is_private=is_private
         )
         
         current_scenario_id = result['scenario_id']
@@ -333,10 +333,10 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
                         label="캐릭터 정보"
                     )
                     
-                    is_public = gr.Checkbox(
-                        label="공개 시나리오",
+                    is_private = gr.Checkbox(
+                        label="비공개 시나리오",
                         value=False,
-                        info="다른 사용자들이 볼 수 있게 공개"
+                        info="다른 사용자들이 볼 수 없게 비공개로 설정"
                     )
                 
                 with gr.Column(scale=2):
@@ -468,7 +468,7 @@ with gr.Blocks(title="Gaji What If Scenario Chat") as demo:
             event_alteration_desc,
             setting_modification_enabled,
             setting_modification_desc,
-            is_public
+            is_private
         ],
         outputs=[scenario_result, scenario_id_display, current_scenario_display, chatbot]
     )
