@@ -75,7 +75,7 @@ app.add_middleware(
 logger.info("fastapi_initialized", cors_allowed=settings.spring_boot_url)
 
 # 라우터 등록
-from app.routers import chat, character_chat, scenario
+from app.routers import chat, character_chat, scenario, ai_generation
 from app.api import prompt, context, scenario_testing  # Story 2.1, 2.2 & 2.4: AI Layer
 app.include_router(character_chat.router)
 app.include_router(scenario.router)
@@ -84,6 +84,7 @@ app.include_router(validation.router)
 app.include_router(prompt.router)  # Story 2.1: Prompt Adaptation
 app.include_router(context.router)  # Story 2.2: Context Window Manager
 app.include_router(scenario_testing.router)  # Story 2.4: Scenario Quality Testing
+app.include_router(ai_generation.router)  # Story 4.2: AI Generation with Long Polling
 
 
 @app.on_event("startup")
