@@ -21,7 +21,7 @@ from app.dto.response import success_response
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/v1/scenarios", tags=["scenarios-proxy"])
-internal_router = APIRouter(prefix="/api/internal/scenarios", tags=["internal-scenarios"])
+internal_router = APIRouter(prefix="/api/v1/internal/scenarios", tags=["internal-scenarios"])
 
 class ScenarioCreateProxyRequest(BaseModel):
     novelId: UUID

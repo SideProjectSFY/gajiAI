@@ -172,7 +172,7 @@ class SpringBootClient:
         """소설 메타데이터 생성 (Internal API)"""
         return await self._request(
             "POST",
-            "/api/internal/novels",
+            "/api/v1/internal/novels",
             jwt_token=jwt_token,
             json=novel_data
         )
@@ -185,7 +185,7 @@ class SpringBootClient:
         """소설 메타데이터 조회 (Internal API)"""
         return await self._request(
             "GET",
-            f"/api/internal/novels/{novel_id}",
+            f"/api/v1/internal/novels/{novel_id}",
             jwt_token=jwt_token
         )
     
@@ -197,7 +197,7 @@ class SpringBootClient:
         """소설의 캐릭터 목록 조회 (Internal API)"""
         response = await self._request(
             "GET",
-            f"/api/internal/novels/{novel_id}/characters",
+            f"/api/v1/internal/novels/{novel_id}/characters",
             jwt_token=jwt_token
         )
         # 응답이 리스트인 경우 그대로 반환, 딕셔너리인 경우 리스트로 변환
@@ -212,7 +212,7 @@ class SpringBootClient:
         """소설 메타데이터 조회 (내부 전용, JWT 토큰 불필요)"""
         return await self._request(
             "GET",
-            f"/api/internal/novels/{novel_id}",
+            f"/api/v1/internal/novels/{novel_id}",
             jwt_token=None
         )
     
@@ -223,7 +223,7 @@ class SpringBootClient:
         """소설의 캐릭터 목록 조회 (내부 전용, JWT 토큰 불필요)"""
         response = await self._request(
             "GET",
-            f"/api/internal/novels/{novel_id}/characters",
+            f"/api/v1/internal/novels/{novel_id}/characters",
             jwt_token=None
         )
         # 응답이 리스트인 경우 그대로 반환, 딕셔너리인 경우 리스트로 변환
