@@ -1,0 +1,63 @@
+services:
+  # FastAPI AI Backend
+  fastapi:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: gaji-ai-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount code for hot-reload
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+      - ./data:/app/data
+      # Mount .env file (if exists)
+      - ./.env:/app/.env:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    networks:
+      - gaji-network
+
+  # Redis (Optional - for Long Polling and Celery)
+  redis:
+    image: redis:7-alpine
+    container_name: gaji-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    networks:
+      - gaji-network
+    command: redis-server --appendonly yes
+
+  # Celery Worker (Optional - for async tasks)
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: gaji-celery-worker
+    command: celery -A app.celery_app worker --loglevel=info --pool=solo
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - redis
+      - fastapi
+    restart: unless-stopped
+    networks:
+      - gaji-network
+
+networks:
+  gaji-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+
