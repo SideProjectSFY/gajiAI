@@ -223,3 +223,106 @@ def delete_task_status(task_id: str) -> bool:
         logger.error(f"Task status 삭제 실패 ({task_id}): {e}")
         return False
 
+
+# Temporary Conversation 관리 함수들 (임시 대화용)
+
+def save_temp_conversation(conversation_id: str, conversation_data: dict, ttl: int = 3600) -> bool:
+    """
+    임시 대화를 Redis에 저장
+    
+    Args:
+        conversation_id: 대화 ID
+        conversation_data: 대화 데이터 (dict)
+        ttl: TTL (초, 기본 1시간 = 3600초)
+    
+    Returns:
+        성공 여부
+    """
+    try:
+        client = get_redis_client()
+        key = f"temp_conv:{conversation_id}"
+        
+        # JSON 문자열로 저장
+        client.setex(
+            key,
+            ttl,
+            json.dumps(conversation_data, ensure_ascii=False)
+        )
+        
+        logger.debug(f"임시 대화 저장: {conversation_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"임시 대화 저장 실패 ({conversation_id}): {e}")
+        return False
+
+
+def get_temp_conversation(conversation_id: str) -> Optional[dict]:
+    """
+    임시 대화 조회
+    
+    Args:
+        conversation_id: 대화 ID
+    
+    Returns:
+        대화 데이터 (dict) 또는 None
+    """
+    try:
+        client = get_redis_client()
+        key = f"temp_conv:{conversation_id}"
+        
+        data = client.get(key)
+        
+        if not data:
+            return None
+        
+        return json.loads(data)
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"임시 대화 JSON 파싱 실패 ({conversation_id}): {e}")
+        return None
+    except Exception as e:
+        logger.error(f"임시 대화 조회 실패 ({conversation_id}): {e}")
+        return None
+
+
+def delete_temp_conversation(conversation_id: str) -> bool:
+    """
+    임시 대화 삭제
+    
+    Args:
+        conversation_id: 대화 ID
+    
+    Returns:
+        성공 여부
+    """
+    try:
+        client = get_redis_client()
+        key = f"temp_conv:{conversation_id}"
+        client.delete(key)
+        logger.debug(f"임시 대화 삭제: {conversation_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"임시 대화 삭제 실패 ({conversation_id}): {e}")
+        return False
+
+
+def exists_temp_conversation(conversation_id: str) -> bool:
+    """
+    임시 대화 존재 여부 확인
+    
+    Args:
+        conversation_id: 대화 ID
+    
+    Returns:
+        존재 여부
+    """
+    try:
+        client = get_redis_client()
+        key = f"temp_conv:{conversation_id}"
+        return client.exists(key) > 0
+        
+    except Exception as e:
+        logger.error(f"임시 대화 존재 확인 실패 ({conversation_id}): {e}")
+        return False

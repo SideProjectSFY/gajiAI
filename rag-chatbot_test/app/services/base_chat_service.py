@@ -55,24 +55,76 @@ class BaseChatService:
         
         # Store 정보 로드 (파일만 읽기, API 호출 없음)
         self.store_info = self._load_store_info(self.store_info_path)
+        
         if self.store_info and self.store_info.get('store_name'):
             self.store_name = self.store_info.get('store_name')
         else:
-            self.store_name = None
+            # Store 정보 파일이 없으면 기존 Store를 자동으로 찾아서 파일 생성 시도
+            self.store_name = self._try_auto_discover_store(project_root)
+    
+    def _try_auto_discover_store(self, project_root: Path) -> Optional[str]:
+        """Store 정보 파일이 없을 때 기존 Store를 자동으로 찾아서 파일 생성
+        
+        Returns:
+            발견된 store_name 또는 None
+        """
+        try:
+            
+            # 기존 Store 목록 확인
+            stores = list(self.client.file_search_stores.list())
+            
+            # 기본 Store 이름으로 찾기
+            default_store_name = "novel-characters-store"
+            for store in stores:
+                if store.display_name == default_store_name:
+                    # Store 정보 파일 자동 생성
+                    current_key_index = self.api_key_manager.current_key_index
+                    store_info_path = project_root / "data" / f"file_search_store_info_key{current_key_index + 1}.json"
+                    
+                    # data 디렉토리 생성
+                    store_info_path.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    # Store 정보 저장
+                    store_info = {
+                        "api_key_index": current_key_index + 1,
+                        "store_name": store.name,
+                        "display_name": store.display_name,
+                        "uploaded_books": [],
+                        "total_books": 0,
+                        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "auto_discovered": True
+                    }
+                    
+                    with open(store_info_path, 'w', encoding='utf-8') as f:
+                        json.dump(store_info, f, indent=2, ensure_ascii=False)
+                    
+                    # 인스턴스 변수 업데이트
+                    self.store_info = store_info
+                    self.store_info_path = str(store_info_path)
+                    
+                    return store.name
+            
+            return None
+        except Exception as e:
+            return None
     
     def _load_store_info(self, path: str) -> dict:
         """File Search Store 정보 로드"""
+        
         try:
             path_obj = Path(path)
             if not path_obj.is_absolute():
                 current_file = Path(__file__)
                 project_root = current_file.parent.parent.parent
                 path_obj = project_root / path_obj
+            
             with open(path_obj, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except FileNotFoundError:
+                data = json.load(f)
+                
+                return data
+        except FileNotFoundError as e:
             return None
-        except Exception:
+        except Exception as e:
             return None
     
     def _ensure_store_loaded(self):
@@ -88,9 +140,12 @@ class BaseChatService:
             current_file = Path(__file__)
             project_root = current_file.parent.parent.parent
             store_info_path = project_root / "data" / f"file_search_store_info_key{current_key_index + 1}.json"
+            
             if not store_info_path.exists():
                 store_info_path = project_root / "data" / "file_search_store_info.json"
+            
             self.store_info = self._load_store_info(str(store_info_path))
+            
             if self.store_info and self.store_info.get('store_name'):
                 self.store_name = self.store_info.get('store_name')
             else:
@@ -132,6 +187,7 @@ class BaseChatService:
                 
                 # Store가 없으면 에러
                 if not self.store_name:
+                    
                     raise ValueError(
                         "File Search Store가 설정되지 않았습니다. "
                         "'py scripts/setup_file_search.py'를 실행하여 Store를 설정하세요."

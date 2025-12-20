@@ -61,7 +61,45 @@ class ScenarioManagementService:
                 store_info = json.load(f)
                 self.store_name = store_info.get('store_name')
         except FileNotFoundError:
-            self.store_name = None
+            # Store 정보 파일이 없으면 기존 Store를 자동으로 찾아서 파일 생성 시도
+            self.store_name = self._try_auto_discover_store(project_root)
+    
+    def _try_auto_discover_store(self, project_root: Path) -> Optional[str]:
+        """기존 File Search Store를 자동으로 찾아서 정보 파일 생성"""
+        try:
+            # 기존 Store 목록 확인
+            stores = list(self.client.file_search_stores.list())
+            
+            # 기본 Store 이름으로 찾기
+            default_store_name = "novel-characters-store"
+            for store in stores:
+                if store.display_name == default_store_name or store.name == default_store_name:
+                    # Store 정보 파일 자동 생성
+                    current_key_index = self.api_key_manager.current_key_index
+                    store_info_path = project_root / "data" / f"file_search_store_info_key{current_key_index + 1}.json"
+                    
+                    # data 디렉토리 생성
+                    store_info_path.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    # Store 정보 저장
+                    store_info = {
+                        "api_key_index": current_key_index + 1,
+                        "store_name": store.name,
+                        "display_name": store.display_name,
+                        "uploaded_books": [],
+                        "total_books": 0,
+                        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "auto_discovered": True
+                    }
+                    
+                    with open(store_info_path, 'w', encoding='utf-8') as f:
+                        json.dump(store_info, f, indent=2, ensure_ascii=False)
+                    
+                    return store.name
+            
+            return None
+        except Exception as e:
+            return None
     
     def create_scenario(
         self,
@@ -593,7 +631,8 @@ IMPORTANT:
 Your ONLY job is to output valid JSON. DO NOT output any conversational text, explanations, or markdown code blocks.
 Use File Search to find relevant information from the source material, then output ONLY the JSON object."""
                 
-                # API 호출 (JSON 모드 강제)
+                # API 호출 (File Search Tool 사용 시 response_mime_type은 지원되지 않음)
+                # 프롬프트에서 JSON 형식을 명확히 요청하고, 응답을 파싱해야 함
                 response = self.client.models.generate_content(
                     model="gemini-2.5-flash",
                     contents=[{"role": "user", "parts": [{"text": prompt}]}],
@@ -606,7 +645,8 @@ Use File Search to find relevant information from the source material, then outp
                                 )
                             )
                         ],
-                        "response_mime_type": "application/json",  # JSON 응답 강제
+                        # File Search Tool과 함께 사용할 때는 response_mime_type을 사용할 수 없음
+                        # "response_mime_type": "application/json",  # 제거됨 - File Search와 호환되지 않음
                         "temperature": 0.1,  # 정확한 포맷을 위해 낮춤
                         "top_p": 0.8,
                         "max_output_tokens": 8192

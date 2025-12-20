@@ -30,37 +30,75 @@
 
 ## 🚀 빠른 시작
 
-### 1. 환경 설정
+### 사전 준비사항
+
+#### 1. 필수 파일 확인
+- `.env` 파일 (API 키 설정)
+- `data/file_search_store_info.json` (File Search Store 정보)
+- `data/characters/` 폴더 (캐릭터 정보)
+- `data/origin_txt/` 폴더 (책 텍스트 파일들)
+
+#### 2. 패키지 설치
 
 ```bash
-# 패키지 설치
+cd gajiAI/rag-chatbot_test
 pip install -r requirements.txt
-
-# .env 파일 생성
-cp .env.example .env
 ```
 
-`.env` 파일에 Gemini API 키 설정:
+#### 3. 환경 변수 설정
+
+`.env` 파일 생성:
 
 ```env
-# 여러 API 키 (쉼표로 구분)
-GEMINI_API_KEYS=key1,key2,key3,key4
+# Gemini API 키 (필수)
+GEMINI_API_KEYS=YOUR-GEMINI-API-KEY1,YOUR-GEMINI-API-KEY2,YOUR-GEMINI-API-KEY3
 
-# 또는 단일 키
-GEMINI_API_KEY=your_api_key_here
+# 또는 단일 키 (레거시 지원)
+# GEMINI_API_KEY=YOUR-GEMINI-API-KEY
+
+# Spring Boot Integration (필수)
+SPRING_BOOT_BASE_URL=http://localhost:8080
+SPRING_BOOT_TIMEOUT=30
+
+# JWT Authentication (Spring Boot와 동일한 키 사용)
+JWT_SECRET_KEY=gaji-secret-key-change-in-production
+JWT_ALGORITHM=HS256
+
+# CORS (Spring Boot만 허용)
+CORS_ALLOWED_ORIGINS=http://localhost:8080
+
+# Redis 설정 (선택적 - Celery 및 Long Polling용)
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_DB=0
+REDIS_PASSWORD=  # 비밀번호가 있으면 설정
+
+# 로깅 설정 (선택적)
+LOG_LEVEL=INFO
+LOG_FORMAT=console  # "console" 또는 "json"
+
+# VectorDB 설정 (선택적)
+VECTORDB_TYPE=chromadb  # "chromadb" 또는 "pinecone"
+CHROMA_PATH=./chroma_data
+
+# FastAPI
+FASTAPI_HOST=0.0.0.0
+FASTAPI_PORT=8000
 ```
 
-### 2. 데이터 준비
+### 데이터 준비
 
+#### 1. CSV 메타데이터 생성 (선택, 검색 속도 향상)
 ```bash
-# 1) CSV 메타데이터 생성 (선택, 검색 속도 향상)
-py convert_to_csv.py
+py scripts/convert_to_csv.py
+```
 
-# 2) 책 검색 및 저장 (이미 55개 저장되어 있음)
+#### 2. 책 검색 및 저장 (이미 55개 저장되어 있음)
+```bash
 py scripts/collect_data.py --search "Frankenstein" --yes
 ```
 
-### 3. File Search Store 설정
+#### 3. File Search Store 설정
 
 ```bash
 # Gemini File Search Store에 책 업로드
@@ -74,7 +112,7 @@ py scripts/setup_file_search.py
 
 **소요 시간**: 책 1개당 약 30초~1분
 
-### 4. 캐릭터 페르소나 생성 (선택)
+#### 4. 캐릭터 페르소나 생성 (선택)
 
 ```bash
 # File Search를 사용하여 원본 텍스트와 인물 관계도를 분석하여
@@ -113,27 +151,120 @@ py scripts/generate_character_personas.py
 - File Search Store가 설정되어 있어야 합니다
 - API 키 할당량을 고려하여 실행하세요
 
-### 5. 테스트
+### 서버 실행
+
+#### 방법 1: 직접 실행 (권장)
 
 ```bash
-# 터미널에서 캐릭터와 대화
-py test_character_chat.py
+cd gajiAI/rag-chatbot_test
+py -m uvicorn app.main:app --reload
 ```
 
-### 6. API 서버 실행
+서버가 시작되면: http://localhost:8000
+
+#### 방법 2: Docker Compose (선택적)
+
+**사전 요구사항**: Docker Desktop 실행 중
 
 ```bash
-# FastAPI 서버 시작
-uvicorn app.main:app --reload
+# 모든 서비스 시작 (FastAPI + Redis + Celery)
+docker-compose up -d
+
+# 로그 확인
+docker-compose logs -f ai-service
+
+# 서비스 중지
+docker-compose down
 ```
 
-서버 실행 후: http://localhost:8000/docs
+#### 방법 3: Redis 및 Celery 워커 실행 (선택적)
+
+비동기 작업(소설 임베딩, 캐릭터 추출)을 사용하려면 Redis와 Celery 워커가 필요합니다.
+
+**Redis 실행**:
+
+**Windows**:
+```bash
+# 방법 1: 스크립트 사용
+scripts\start_redis.bat
+
+# 방법 2: Docker 직접 실행
+docker run -d -p 6379:6379 --name gaji-redis redis:latest
+```
+
+**Linux/Mac**:
+```bash
+# 방법 1: 스크립트 사용
+./scripts/start_redis.sh
+
+# 방법 2: Docker 직접 실행
+docker run -d -p 6379:6379 --name gaji-redis redis:latest
+```
+
+**Celery 워커 실행**:
+
+**Windows**:
+```bash
+scripts\start_celery_worker.bat
+```
+
+**Linux/Mac**:
+```bash
+chmod +x scripts/start_celery_worker.sh
+./scripts/start_celery_worker.sh
+```
+
+**참고**: Celery 워커는 별도 터미널 창에서 실행해야 합니다.
+
+### Spring Boot와 함께 실행
+
+이 프로젝트는 Spring Boot API Gateway와 통합되어 있습니다.
+
+#### Spring Boot 실행 (포트 8080)
+
+```bash
+cd gajiBE
+./gradlew bootRun
+```
+
+#### FastAPI 실행 (포트 8000)
+
+```bash
+cd gajiAI/rag-chatbot_test
+py -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### 서비스 상태 확인
+
+- **FastAPI**: http://localhost:8000/health
+- **Spring Boot**: http://localhost:8080/actuator/health
+- **API 문서**: http://localhost:8000/docs
+- **메트릭**: http://localhost:8000/api/metrics
 
 ## 📡 API 사용법
 
 ### Base URL
 - **FastAPI**: `http://localhost:8000/api`
 - **API 문서**: `http://localhost:8000/docs` (Swagger UI)
+- **Spring Boot**: `http://localhost:8080/api/v1` (API Gateway)
+
+### 주요 API 엔드포인트
+
+- **API 문서**: http://localhost:8000/docs
+- **헬스 체크**: `GET /health`
+- **캐릭터 목록**: `GET /api/ai/characters`
+- **캐릭터 정보**: `GET /api/ai/characters/info/{character_name}`
+- **AI 대화**: `POST /api/ai/conversations/{conversation_id}/messages`
+- **시나리오 생성**: `POST /api/v1/scenarios` (Spring Boot 통합)
+- **시나리오 목록**: `GET /api/v1/scenarios` (Spring Boot 통합)
+- **시나리오 상세**: `GET /api/v1/scenarios/{id}` (Spring Boot 통합)
+- **시나리오 대화**: `POST /api/ai/chat/scenarios/{scenario_id}` (Spring Boot 통합)
+- **시나리오 Fork**: `POST /api/v1/scenarios/{id}/fork` (Spring Boot 통합)
+- **소설 임베딩**: `POST /api/ai/novels/ingest`
+- **캐릭터 추출**: `POST /api/ai/characters/extract`
+- **의미 검색**: `POST /api/ai/search/passages`
+- **메트릭 조회**: `GET /api/metrics`
+- **작업 상태**: `GET /api/tasks/{task_id}/status`
 
 ### 1. 캐릭터 목록 조회
 
@@ -618,12 +749,53 @@ ScenarioChatService (BaseChatService 상속)
 - **의존성 최소화**: 각 서비스가 필요한 기능만 사용
 - **코드 중복 제거**: 유지보수 용이성 향상
 
-## 📚 추가 문서
+## 📚 참고사항
 
-- [마이그레이션 가이드](MIGRATION_GUIDE.md) - v1.0 → v2.0 전환
-- [텍스트 품질 분석](TEXT_QUALITY_ANALYSIS.md) - 책 선택 알고리즘
-- [API 키 설정](API_KEY_SETUP_SUMMARY.md) - API 키 관리
-- [변경 이력](CHANGELOG.md) - 버전별 변경사항
+### 필수 구성 요소
+- ✅ FastAPI 서버
+- ✅ Gemini API 키
+- ✅ File Search Store (`data/file_search_store_info.json`)
+- ✅ Spring Boot API Gateway (통합 환경)
+
+### 선택적 구성 요소
+
+**없어도 기본 기능 작동**:
+- ⚪ Redis (Long Polling 및 Celery 브로커용)
+- ⚪ Celery 워커 (비동기 작업용)
+
+**비동기 작업 사용 시 필요**:
+- ✅ Redis (Celery 브로커)
+- ✅ Celery 워커 실행
+
+**비동기 작업 예시**:
+- 소설 임베딩 (`POST /api/ai/novels/ingest`)
+- 캐릭터 추출 (`POST /api/ai/characters/extract`)
+
+### 실행 순서 (비동기 작업 사용 시)
+
+1. **Redis 시작** (선택적)
+   ```bash
+   scripts\start_redis.bat  # Windows
+   # 또는
+   docker-compose up -d redis
+   ```
+
+2. **Celery 워커 시작** (선택적)
+   ```bash
+   scripts\start_celery_worker.bat  # Windows
+   ```
+
+3. **Spring Boot 시작** (통합 환경)
+   ```bash
+   cd gajiBE
+   ./gradlew bootRun
+   ```
+
+4. **FastAPI 서버 시작**
+   ```bash
+   cd gajiAI/rag-chatbot_test
+   py -m uvicorn app.main:app --reload
+   ```
 
 ## 💡 사용 예시
 
@@ -874,6 +1046,11 @@ curl http://localhost:8000/api/tasks/{task_id}/status
 
 ## 🐛 문제 해결
 
+### 서버가 시작되지 않는 경우
+1. **포트 충돌**: `--port 8001` 옵션으로 다른 포트 사용
+2. **API 키 오류**: `.env` 파일의 API 키 확인
+3. **File Search Store 오류**: `py scripts/setup_file_search.py` 실행
+
 ### File Search Store 정보를 찾을 수 없습니다
 ```bash
 # 해결: File Search Store 설정 실행
@@ -888,6 +1065,24 @@ py scripts/setup_file_search.py
 - `data/characters/` 폴더의 JSON 파일 확인 (새 구조)
 - 또는 `data/characters.json` 파일 확인 (레거시)
 - 캐릭터 이름 정확히 입력
+
+### Docker 오류
+- Docker Desktop이 실행 중인지 확인: `docker ps`
+- Docker Desktop이 없으면 직접 실행 방법 사용
+
+### Redis/Celery 오류
+- **Redis 연결 실패**: Redis가 실행 중인지 확인 (`docker ps` 또는 `redis-cli ping`)
+- **Celery 워커 오류**: 
+  - Windows에서는 `--pool=solo` 옵션이 자동 적용됩니다
+  - 프로젝트 루트 디렉토리에서 실행해야 합니다
+  - `ModuleNotFoundError: No module named 'app'` 오류 시: 스크립트를 사용하세요 (`scripts/start_celery_worker.bat`)
+
+**참고**: Redis와 Celery는 선택적 구성 요소입니다. 없어도 기본 AI 대화 기능은 정상 작동합니다. 다만 비동기 작업(소설 임베딩, 캐릭터 추출)은 Celery 워커가 필요합니다.
+
+### Spring Boot 통신 오류
+- **연결 실패**: Spring Boot가 실행 중인지 확인 (`http://localhost:8080/actuator/health`)
+- **JWT 인증 실패**: `.env` 파일의 `JWT_SECRET_KEY`가 Spring Boot와 동일한지 확인
+- **CORS 오류**: `.env` 파일의 `CORS_ALLOWED_ORIGINS`에 Spring Boot URL이 포함되어 있는지 확인
 
 ## 🎭 캐릭터 페르소나 자동 생성
 
@@ -963,51 +1158,123 @@ data/characters/
 - [x] 캐릭터 추출 기능 (chargraph 통합)
 - [x] 메트릭 수집 및 헬스 체크
 
-### Spring Boot 통신 통합 (TODO) 🔧
+## 🔗 Spring Boot 통합 (Phase 1 완료)
 
-#### Phase 1: 기본 통신 (필수)
-- [ ] **Spring Boot Internal API 클라이언트 구현**
-  - `httpx.AsyncClient`를 사용한 Spring Boot `/api/internal/*` 호출
-  - Internal API 인증 토큰 처리
-  - 재시도 로직 및 에러 처리
-  
-- [ ] **인증/인가 미들웨어 추가**
-  - JWT 토큰 검증 미들웨어
-  - Spring Boot에서 전달받은 토큰 검증
-  - 사용자 정보 추출 및 의존성 주입
-  
-- [ ] **시나리오 CRUD를 Spring Boot로 위임**
-  - 시나리오 생성/조회/수정/삭제를 Spring Boot API로 호출
-  - FastAPI는 AI 대화 기능만 담당
+### 구현 내용
 
-#### Phase 2: 데이터 동기화 (필수)
-- [ ] **시나리오 메타데이터를 PostgreSQL로 이동**
-  - 현재 파일 시스템 저장 → PostgreSQL 저장으로 전환
-  - Spring Boot의 시나리오 관리 API 활용
-  
-- [ ] **FastAPI는 VectorDB만 관리**
-  - 소설 임베딩, 캐릭터 추출, 의미 검색만 담당
-  - 메타데이터는 Spring Boot에서 관리
-  
-- [ ] **Spring Boot ↔ FastAPI 간 데이터 동기화 로직**
-  - 소설 임베딩 시 Spring Boot에 메타데이터 저장
-  - 캐릭터 추출 시 Spring Boot에 캐릭터 정보 저장
+#### FastAPI 측 (gajiAI)
 
-#### Phase 3: 개선 (권장)
-- [ ] **응답 형식 표준화**
-  - 공통 응답 래퍼 클래스 구현
-  - 에러 응답 형식 통일
-  - API 문서와 일치하는 응답 형식
-  
-- [ ] **에러 처리 개선**
-  - 표준화된 에러 코드
-  - 상세한 에러 메시지
-  - 로깅 강화
-  
-- [ ] **로깅 및 모니터링 강화**
-  - Correlation ID 추적
-  - 성능 메트릭 수집
-  - 분산 추적 시스템 통합
+**신규 파일**:
+- `app/services/spring_boot_client.py` - Spring Boot API 클라이언트
+- `app/middleware/jwt_auth.py` - JWT 인증 미들웨어
+- `app/routers/scenario_proxy.py` - Spring Boot 시나리오 API Proxy
+- `app/routers/scenario_chat.py` - 시나리오 대화 API (Spring Boot 통합)
+- `tests/test_phase1_integration.py` - 통합 테스트
+
+**수정 파일**:
+- `app/config/settings.py` - JWT, Spring Boot URL 설정 추가
+- `requirements.txt` - pyjwt 패키지 추가
+- `app/main.py` - scenario_proxy, scenario_chat 라우터 등록
+
+#### Spring Boot 측 (gajiBE)
+
+이미 구현되어 있는 것:
+- ✅ JWT 인증 (SecurityConfig, JwtAuthenticationFilter)
+- ✅ WebClient 설정 (WebClientConfig)
+- ✅ Scenario API (ScenarioController)
+- ✅ Health Check (HealthCheckController)
+- ✅ Internal API 엔드포인트 (`/api/internal/*`)
+
+### Phase 1 테스트
+
+#### 1. Health Check
+
+**Spring Boot**:
+```bash
+curl http://localhost:8080/actuator/health
+```
+
+**FastAPI**:
+```bash
+curl http://localhost:8000/health
+```
+
+#### 2. JWT 인증 테스트
+
+**Step 1: JWT 발행 (Spring Boot)**
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "jane.austen@gaji.com",
+    "password": "password123"
+  }'
+```
+
+응답:
+```json
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "userId": "550e8400-e29b-41d4-a716-446655440001",
+  "email": "jane.austen@gaji.com",
+  "username": "jane_austen"
+}
+```
+
+**Step 2: FastAPI에 JWT로 요청**
+```bash
+curl -X GET http://localhost:8000/api/v1/scenarios/{scenario_id} \
+  -H "Authorization: Bearer <JWT_TOKEN>"
+```
+
+#### 3. 시나리오 Proxy 테스트
+
+**Step 1: 시나리오 생성 (FastAPI → Spring Boot)**
+```bash
+TOKEN="<JWT_TOKEN>"
+
+curl -X POST http://localhost:8000/api/v1/scenarios \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "novelId": "280d7098-fe82-432a-9e5d-5abbd541a0d2",
+    "scenarioTitle": "Phase 1 테스트",
+    "characterChanges": "논리적이지만 감정도 중시",
+    "isPrivate": false
+  }'
+```
+
+**Step 2: 시나리오 조회 (FastAPI → Spring Boot)**
+```bash
+curl -X GET http://localhost:8000/api/v1/scenarios/{scenario_id} \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### 통합 테스트 실행
+
+```bash
+cd gajiAI/rag-chatbot_test
+pytest tests/test_phase1_integration.py -v
+```
+
+### Phase 1 체크리스트
+
+- ✅ FastAPI httpx 클라이언트 구현
+- ✅ JWT 검증 미들웨어 구현
+- ✅ 시나리오 CRUD Proxy 구현
+- ✅ 시나리오 대화 API (Spring Boot 통합)
+- ✅ Spring Boot WebClient 설정 확인
+- ✅ 환경 변수 설정 가이드
+- ✅ 통합 테스트 작성
+
+### 다음 단계: Phase 2
+
+Phase 2에서는:
+1. 대화 메타데이터 동기화
+2. AI 대화 생성 시 Spring Boot에 저장
+3. 대화 이력 조회/포크 통합
+
+자세한 내용은 메인 프로젝트의 `SETUP.md` 참고
 
 ### 기능 확장 (선택)
 - [ ] 더 많은 캐릭터 추가

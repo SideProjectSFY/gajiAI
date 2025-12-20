@@ -325,7 +325,7 @@ async def scenario_chat(
                 conversation_partner_type = "stranger"
         
         # 대화 처리
-        result = chat_service.first_conversation(
+        result = await chat_service.first_conversation(
             scenario_id=scenario_id,
             initial_message=request.message,
             output_language="ko",
@@ -438,13 +438,13 @@ async def forked_scenario_chat(
         
         # 대화 처리
         # reference_first_conversation이 있으면 그것을 사용, 없으면 None (기존 대화 맥락 사용 안 함)
-        result = chat_service.first_conversation(
+        result = await chat_service.first_conversation(
             scenario_id=scenario_id,
             initial_message=request.message,
             output_language="ko",
             is_creator=False,
             conversation_id=request.conversation_id,
-            reference_first_conversation=reference_first_conv,  # reference_first_conversation 직접 사용
+            reference_first_conversation=reference_first_conv,
             conversation_partner_type=conversation_partner_type,
             other_main_character=other_main_character
         )
