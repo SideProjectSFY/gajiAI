@@ -1,0 +1,45 @@
+name: "🐛 Bug"
+description: "예상과 다른 동작 보고"
+title: "[BUG] "
+labels: ["bug", "sp001"]
+body:
+  - type: input
+    id: summary
+    attributes:
+      label: 요약
+      placeholder: 로그인 버튼 클릭 시 앱 크래시
+  - type: textarea
+    id: steps
+    attributes:
+      label: 재현 절차
+      placeholder: |
+        1. 앱 실행
+        2. 로그인 버튼 탭
+        3. ...
+  - type: textarea
+    id: result
+    attributes:
+      label: 예상 결과 vs 실제 결과
+      placeholder: |
+        **예상:**  
+        **실제:**
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 플랫폼
+      multiple: true
+      options: [iOS, Android, Both]
+  - type: input
+    id: env
+    attributes:
+      label: 기기 / OS / 앱 버전
+      placeholder: Galaxy S24 / Android 15 / v0.4.1
+  - type: textarea
+    id: media
+    attributes:
+      label: 스크린샷·로그
+      description: 이미지·GIF·expo.dev logs 첨부
+  - type: textarea
+    id: notes
+    attributes:
+      label: 추가 정보
