@@ -13,6 +13,9 @@ chromadb>=1.3.5
 # Async HTTP Client (Spring Boot callbacks)
 httpx>=0.28.1
 
+# JWT Authentication
+pyjwt>=2.8.0
+
 # Celery & Redis (Async task queue + Long Polling)
 # OPTIONAL: Redis is now optional - falls back to in-memory backend if not available
 celery>=5.5.3

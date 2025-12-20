@@ -7,12 +7,23 @@ What if 시나리오를 적용하여 캐릭터와 대화하는 서비스
 import json
 import uuid
 import threading
+import asyncio
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 from app.services.scenario_management_service import ScenarioManagementService
 from app.services.base_chat_service import BaseChatService
 from app.services.character_data_loader import CharacterDataLoader
+from app.services.spring_boot_client import spring_boot_client
+from app.config.redis_client import (
+    save_temp_conversation,
+    get_temp_conversation,
+    delete_temp_conversation,
+    exists_temp_conversation
+)
+import structlog
+
+logger = structlog.get_logger()
 
 
 class ScenarioChatService(BaseChatService):
@@ -31,15 +42,8 @@ class ScenarioChatService(BaseChatService):
         current_file = Path(__file__)
         self.project_root = current_file.parent.parent.parent
         
-        # 임시 대화 저장 디렉토리 (파일 기반)
-        self.temp_conversations_dir = self.project_root / "data" / "scenarios" / "temp_conversations"
-        self.temp_conversations_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Thread-safe를 위한 Lock 추가
-        self._conversations_lock = threading.Lock()
-        
-        # TTL 설정: 1시간 후 자동 삭제
-        self.conversation_ttl = timedelta(hours=1)
+        # TTL 설정: 1시간 후 자동 삭제 (Redis TTL은 초 단위)
+        self.conversation_ttl_seconds = 3600  # 1시간
     
     def create_scenario_prompt(
         self,
@@ -113,11 +117,23 @@ CRITICAL INSTRUCTION: Your speaking style is ESSENTIAL to your character identit
 Even when speaking in {output_language}, you must preserve the essence of your original speaking style. For example, if you are analytical and methodical in English, you must be analytical and methodical in Korean as well, using equivalent expressions that convey the same tone and style.
 """
         
-        # 변경사항이 있을 때만 ALTERNATE TIMELINE 컨텍스트 추가
-        if has_any_changes:
+        # What If Question 확인
+        what_if_question = scenario.get("whatIfQuestion") or scenario.get("what_if_question") or ""
+        
+        # 변경사항이 있거나 What If Question이 있을 때 ALTERNATE TIMELINE 컨텍스트 추가
+        if has_any_changes or what_if_question:
             prompt += """
 【Scenario Context - IMPORTANT】
 This conversation takes place in an ALTERNATE TIMELINE where certain changes have occurred.
+"""
+            if what_if_question:
+                prompt += f"""
+【What If Question - CRITICAL】
+The core premise of this alternate timeline is: "{what_if_question}"
+
+You MUST embody this alternate reality. Your responses must reflect how you would think, feel, and act in this changed timeline. This is not a hypothetical discussion - you ARE living in this alternate timeline and have experienced these changes as reality.
+
+For example, if the What If question is about you showing compassion instead of rejection, you must respond as someone who HAS shown compassion, not as someone who is merely discussing the possibility.
 """
             
             if is_forked:
@@ -272,7 +288,7 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
         
         return prompt
     
-    def first_conversation(
+    async def first_conversation(
         self,
         scenario_id: str,
         initial_message: str,
@@ -281,7 +297,9 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
         conversation_id: Optional[str] = None,
         reference_first_conversation: Optional[Dict] = None,
         conversation_partner_type: str = "stranger",
-        other_main_character: Optional[Dict] = None
+        other_main_character: Optional[Dict] = None,
+        jwt_token: Optional[str] = None,
+        user_id: Optional[str] = None
     ) -> Dict:
         """
         첫 대화 시작 (5턴 제한)
@@ -292,23 +310,160 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
             output_language: 출력 언어
             is_creator: 원본 생성자인지 여부
             conversation_id: 기존 대화 ID (계속하기용)
+            jwt_token: JWT 토큰 (있으면 PostgreSQL 저장, 없으면 파일 시스템 저장)
+            user_id: 사용자 ID (jwt_token이 있을 때 필수)
         
         Returns:
             대화 응답
         """
-        # 시나리오 로드
-        scenario = self.scenario_service.get_scenario(scenario_id)
+        if jwt_token and not user_id:
+            raise ValueError("jwt_token이 제공되면 user_id도 필수입니다.")
+        
+        if jwt_token:
+            scenario_data = await spring_boot_client.get_scenario(scenario_id, jwt_token)
+            
+            # Spring Boot에서 받은 데이터 파싱 (JSON 문자열 또는 일반 문자열)
+            import json as json_module
+            
+            # Character Changes 파싱
+            character_changes_str = scenario_data.get("characterChanges") or scenario_data.get("characterPropertyChanges") or ""
+            if character_changes_str:
+                try:
+                    # JSON 문자열인 경우 파싱
+                    if isinstance(character_changes_str, str) and character_changes_str.strip().startswith("{"):
+                        character_changes = json_module.loads(character_changes_str)
+                    elif isinstance(character_changes_str, dict):
+                        character_changes = character_changes_str
+                    else:
+                        # 일반 문자열인 경우 (분석 실패 시 fallback)
+                        character_changes = {"enabled": True, "description": character_changes_str, "changes": []}
+                except (json_module.JSONDecodeError, TypeError):
+                    # 파싱 실패 시 일반 문자열로 처리
+                    character_changes = {"enabled": True, "description": character_changes_str, "changes": []}
+            else:
+                character_changes = {"enabled": False}
+            
+            # Event Alterations 파싱
+            event_alterations_str = scenario_data.get("eventAlterations") or ""
+            if event_alterations_str:
+                try:
+                    # JSON 문자열인 경우 파싱
+                    if isinstance(event_alterations_str, str) and event_alterations_str.strip().startswith("{"):
+                        event_alterations = json_module.loads(event_alterations_str)
+                    elif isinstance(event_alterations_str, dict):
+                        event_alterations = event_alterations_str
+                    else:
+                        # 일반 문자열인 경우 (분석 실패 시 fallback)
+                        event_alterations = {"enabled": True, "description": event_alterations_str, "alterations": []}
+                except (json_module.JSONDecodeError, TypeError):
+                    # 파싱 실패 시 일반 문자열로 처리
+                    event_alterations = {"enabled": True, "description": event_alterations_str, "alterations": []}
+            else:
+                event_alterations = {"enabled": False}
+            
+            # Setting Modifications 파싱
+            setting_modifications_str = scenario_data.get("settingModifications") or ""
+            if setting_modifications_str:
+                try:
+                    # JSON 문자열인 경우 파싱
+                    if isinstance(setting_modifications_str, str) and setting_modifications_str.strip().startswith("{"):
+                        setting_modifications = json_module.loads(setting_modifications_str)
+                    elif isinstance(setting_modifications_str, dict):
+                        setting_modifications = setting_modifications_str
+                    else:
+                        # 일반 문자열인 경우 (분석 실패 시 fallback)
+                        setting_modifications = {"enabled": True, "description": setting_modifications_str, "modifications": []}
+                except (json_module.JSONDecodeError, TypeError):
+                    # 파싱 실패 시 일반 문자열로 처리
+                    setting_modifications = {"enabled": True, "description": setting_modifications_str, "modifications": []}
+            else:
+                setting_modifications = {"enabled": False}
+            
+            # Spring Boot에서 Novel 정보 조회
+            novel_id = scenario_data.get("novelId")
+            book_title = None
+            character_name = None
+            character_data = None
+            
+            if novel_id:
+                novel_data = await spring_boot_client.get_novel(str(novel_id), jwt_token)
+                book_title = novel_data.get("title") if novel_data else None
+                
+                # Spring Boot API에서 캐릭터 목록 조회 (DB에서)
+                if novel_id:
+                    logger.info(
+                        "fetching_characters_from_db",
+                        novel_id=str(novel_id),
+                        book_title=book_title
+                    )
+                    
+                    characters_list = await spring_boot_client.get_characters_by_novel(str(novel_id), jwt_token)
+                    
+                    if characters_list:
+                        # 주인공 캐릭터 우선 선택 (is_main_character = true)
+                        main_characters = [c for c in characters_list if c.get("isMainCharacter")]
+                        if main_characters:
+                            character_data = main_characters[0]
+                        else:
+                            # 주인공이 없으면 첫 번째 캐릭터 선택
+                            character_data = characters_list[0]
+                        
+                        character_name = character_data.get("commonName")
+                        logger.info(
+                            "character_found_from_db",
+                            character_name=character_name,
+                            is_main_character=character_data.get("isMainCharacter"),
+                            novel_id=str(novel_id)
+                        )
+                    else:
+                        logger.warning(
+                            "no_characters_found_in_db",
+                            novel_id=str(novel_id),
+                            book_title=book_title
+                        )
+            
+            if not character_name or not character_data:
+                raise ValueError(f"캐릭터를 찾을 수 없습니다. Novel: {book_title or 'Unknown'}, Novel ID: {novel_id or 'None'}")
+            
+            scenario = {
+                "scenario_id": str(scenario_data.get("id")),
+                "character_name": character_name,
+                "book_title": book_title,
+                "character_property_changes": character_changes,
+                "event_alterations": event_alterations,
+                "setting_modifications": setting_modifications,
+                "whatIfQuestion": scenario_data.get("whatIfQuestion") or scenario_data.get("what_if_question") or ""
+            }
+        else:
+            scenario = self.scenario_service.get_scenario(scenario_id)
+        
         if not scenario:
             raise ValueError(f"시나리오를 찾을 수 없습니다: {scenario_id}")
         
         # 캐릭터 정보 로드
-        character = CharacterDataLoader.get_character_info(
-            self.characters,
-            scenario["character_name"],
-            scenario["book_title"]
-        )
-        if not character:
-            raise ValueError(f"캐릭터를 찾을 수 없습니다: {scenario['character_name']}")
+        if jwt_token and character_data:
+            # Spring Boot에서 가져온 캐릭터 데이터 사용 (DB에서)
+            character = {
+                "character_name": character_data.get("commonName"),
+                "book_title": book_title,
+                "persona": character_data.get("personaKo") or character_data.get("personaEn") or character_data.get("persona"),
+                "persona_en": character_data.get("personaEn") or character_data.get("persona"),
+                "persona_ko": character_data.get("personaKo"),
+                "speaking_style": character_data.get("speakingStyleKo") or character_data.get("speakingStyleEn") or character_data.get("speakingStyle"),
+                "speaking_style_en": character_data.get("speakingStyleEn") or character_data.get("speakingStyle"),
+                "speaking_style_ko": character_data.get("speakingStyleKo"),
+                "description": character_data.get("description"),
+                "common_name": character_data.get("commonName")
+            }
+        else:
+            # 파일 시스템에서 캐릭터 정보 로드 (레거시)
+            character = CharacterDataLoader.get_character_info(
+                self.characters,
+                scenario["character_name"],
+                scenario["book_title"]
+            )
+            if not character:
+                raise ValueError(f"캐릭터를 찾을 수 없습니다: {scenario['character_name']}")
         
         # 시나리오 적용 프롬프트 생성
         # is_creator가 False면 Fork된 시나리오이므로 원본 first_conversation 참조
@@ -328,26 +483,30 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
             other_main_character=other_main_character
         )
         
-        # 오래된 임시 대화 정리 (TTL 체크)
-        self._cleanup_expired_conversations()
-        
-        # 임시 대화 ID 생성 또는 기존 ID 사용 (Thread-safe)
-        with self._conversations_lock:
+        if jwt_token:
+            if not conversation_id:
+                conv_data = await spring_boot_client.create_conversation(
+                    {"scenarioId": str(scenario_id)},
+                    jwt_token,
+                    user_id
+                )
+                conversation_id = str(conv_data.get("id"))
+            
+            conv_data = await spring_boot_client.get_conversation(conversation_id, jwt_token)
+            messages_data = conv_data.get("messages", [])
+            messages = [
+                {"role": msg.get("role"), "content": msg.get("content")}
+                for msg in messages_data
+            ]
+            turn_count = len([m for m in messages if m["role"] == "user"])
+        else:
+            # Redis에서 임시 대화 로드
             if conversation_id:
-                # 파일에서 임시 대화 로드
-                temp_conv_file = self.temp_conversations_dir / f"{conversation_id}.json"
-                if not temp_conv_file.exists():
+                temp_conv = await asyncio.to_thread(get_temp_conversation, conversation_id)
+                if not temp_conv:
                     raise ValueError(f"임시 대화를 찾을 수 없습니다: {conversation_id}")
                 
-                with open(temp_conv_file, 'r', encoding='utf-8') as f:
-                    temp_conv = json.load(f)
-                
-                # TTL 체크
-                created_at = datetime.fromisoformat(temp_conv.get("created_at", datetime.utcnow().isoformat()).replace('Z', '+00:00'))
-                if datetime.utcnow() - created_at.replace(tzinfo=None) > self.conversation_ttl:
-                    temp_conv_file.unlink()  # 파일 삭제
-                    raise ValueError(f"임시 대화가 만료되었습니다: {conversation_id}")
-                
+                # Redis TTL이 자동으로 관리되므로 만료 체크 불필요
                 messages = temp_conv.get("messages", [])
                 turn_count = temp_conv.get("turn_count", 0)
             else:
@@ -398,45 +557,61 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
         except Exception as e:
             raise ValueError(f"대화 생성 실패: {str(e)}")
         
-        # 응답 메시지 추가 (grounding_metadata 제외)
-        messages.append({
-            "role": "user",
-            "content": initial_message,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-            "turn": turn_count + 1
-        })
-        messages.append({
-            "role": "assistant",
-            "content": result["response"],
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-            "turn": turn_count + 1
-        })
-        
         turn_count += 1
         
-        # other_main_character 최소 정보만 저장 (character_name, book_title만)
-        other_main_character_minimal = None
-        if other_main_character:
-            other_main_character_minimal = {
-                "character_name": other_main_character.get("character_name"),
-                "book_title": other_main_character.get("book_title")
+        if jwt_token:
+            await spring_boot_client.save_message(
+                conversation_id,
+                initial_message,
+                "user",
+                user_id,
+                jwt_token
+            )
+            await spring_boot_client.save_message(
+                conversation_id,
+                result["response"],
+                "assistant",
+                user_id,
+                jwt_token
+            )
+        else:
+            messages.append({
+                "role": "user",
+                "content": initial_message,
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "turn": turn_count
+            })
+            messages.append({
+                "role": "assistant",
+                "content": result["response"],
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "turn": turn_count
+            })
+            
+            other_main_character_minimal = None
+            if other_main_character:
+                other_main_character_minimal = {
+                    "character_name": other_main_character.get("character_name"),
+                    "book_title": other_main_character.get("book_title")
+                }
+            
+            temp_conv_data = {
+                "scenario_id": scenario_id,
+                "messages": messages,
+                "turn_count": turn_count,
+                "is_creator": is_creator,
+                "conversation_partner_type": conversation_partner_type,
+                "other_main_character": other_main_character_minimal,
+                "created_at": datetime.utcnow().isoformat() + "Z"
             }
-        
-        # 임시 저장 (파일 기반, Thread-safe)
-        temp_conv_data = {
-            "scenario_id": scenario_id,
-            "messages": messages,
-            "turn_count": turn_count,
-            "is_creator": is_creator,
-            "conversation_partner_type": conversation_partner_type,
-            "other_main_character": other_main_character_minimal,
-            "created_at": datetime.utcnow().isoformat() + "Z"  # TTL 관리를 위한 생성 시간
-        }
-        
-        with self._conversations_lock:
-            temp_conv_file = self.temp_conversations_dir / f"{conversation_id}.json"
-            with open(temp_conv_file, 'w', encoding='utf-8') as f:
-                json.dump(temp_conv_data, f, ensure_ascii=False, indent=2)
+            
+            # Redis에 저장 (비동기 래핑)
+            await asyncio.to_thread(
+                save_temp_conversation,
+                conversation_id,
+                temp_conv_data,
+                self.conversation_ttl_seconds
+            )
         
         return {
             "conversation_id": conversation_id,
@@ -445,8 +620,8 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
             "grounding_metadata": result.get("grounding_metadata"),
             "turn_count": turn_count,
             "max_turns": 5,
-            "is_temporary": True,
-            "is_creator": is_creator  # Fork 여부 확인용
+            "is_temporary": not bool(jwt_token),
+            "is_creator": is_creator
         }
     
     def confirm_first_conversation(
@@ -466,14 +641,10 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
         Returns:
             컨펌 결과
         """
-        # 파일에서 임시 대화 로드 (Thread-safe)
-        temp_conv_file = self.temp_conversations_dir / f"{conversation_id}.json"
-        with self._conversations_lock:
-            if not temp_conv_file.exists():
-                raise ValueError(f"임시 대화를 찾을 수 없습니다: {conversation_id}")
-            
-            with open(temp_conv_file, 'r', encoding='utf-8') as f:
-                temp_conv = json.load(f)
+        # Redis에서 임시 대화 로드
+        temp_conv = get_temp_conversation(conversation_id)
+        if not temp_conv:
+            raise ValueError(f"임시 대화를 찾을 수 없습니다: {conversation_id}")
         
         if action == "save":
             # 시나리오 로드
@@ -496,10 +667,8 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
             # 시나리오 업데이트
             self.scenario_service.update_scenario(scenario)
             
-            # 임시 대화 파일 삭제 (Thread-safe)
-            with self._conversations_lock:
-                if temp_conv_file.exists():
-                    temp_conv_file.unlink()
+            # Redis에서 임시 대화 삭제
+            delete_temp_conversation(conversation_id)
             
             return {
                 "scenario_id": scenario_id,
@@ -508,10 +677,8 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
                 "message": "첫 대화가 시나리오에 저장되었습니다."
             }
         else:  # cancel
-            # 임시 대화 파일 삭제 (Thread-safe)
-            with self._conversations_lock:
-                if temp_conv_file.exists():
-                    temp_conv_file.unlink()
+            # Redis에서 임시 대화 삭제
+            delete_temp_conversation(conversation_id)
             
             return {
                 "scenario_id": scenario_id,
@@ -615,6 +782,7 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
         
         # BaseChatService의 공통 API 호출 로직 직접 사용
         try:
+            
             response = self._call_gemini_api(
                 contents=contents,
                 system_instruction=system_instruction,
@@ -691,37 +859,11 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
     
     def _cleanup_expired_conversations(self):
         """
-        만료된 임시 대화 파일 정리 (TTL 체크)
-        Thread-safe하게 실행됨
+        만료된 임시 대화 정리 (Redis TTL이 자동으로 관리되므로 불필요)
+        레거시 호환성을 위해 유지 (빈 함수)
         """
-        now = datetime.utcnow()
-        expired_files = []
-        
-        with self._conversations_lock:
-            # 모든 임시 대화 파일 확인
-            for conv_file in self.temp_conversations_dir.glob("*.json"):
-                try:
-                    with open(conv_file, 'r', encoding='utf-8') as f:
-                        conv_data = json.load(f)
-                    
-                    created_at_str = conv_data.get("created_at", "")
-                    if created_at_str:
-                        # ISO 형식 파싱 (Z 제거 후 UTC로 처리)
-                        created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
-                        created_at_utc = created_at.replace(tzinfo=None)
-                        
-                        if now - created_at_utc > self.conversation_ttl:
-                            expired_files.append(conv_file)
-                except (json.JSONDecodeError, ValueError, KeyError) as e:
-                    # 잘못된 파일은 삭제
-                    expired_files.append(conv_file)
-            
-            # 만료된 파일 삭제
-            for expired_file in expired_files:
-                try:
-                    expired_file.unlink()
-                except Exception:
-                    pass  # 삭제 실패해도 계속 진행
+        # Redis TTL이 자동으로 만료된 키를 삭제하므로 수동 정리 불필요
+        pass
     
     def confirm_forked_conversation(
         self,
@@ -742,14 +884,10 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
         Returns:
             컨펌 결과
         """
-        # 파일에서 임시 대화 로드 (Thread-safe)
-        temp_conv_file = self.temp_conversations_dir / f"{conversation_id}.json"
-        with self._conversations_lock:
-            if not temp_conv_file.exists():
-                raise ValueError(f"임시 대화를 찾을 수 없습니다: {conversation_id}")
-            
-            with open(temp_conv_file, 'r', encoding='utf-8') as f:
-                temp_conv = json.load(f)
+        # Redis에서 임시 대화 로드
+        temp_conv = get_temp_conversation(conversation_id)
+        if not temp_conv:
+            raise ValueError(f"임시 대화를 찾을 수 없습니다: {conversation_id}")
         
         if action == "save":
             # Fork된 시나리오 파일 로드
@@ -790,10 +928,8 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
             with open(forked_scenario_file, 'w', encoding='utf-8') as f:
                 json.dump(forked_scenario, f, ensure_ascii=False, indent=2)
             
-            # 임시 대화 파일 삭제 (Thread-safe)
-            with self._conversations_lock:
-                if temp_conv_file.exists():
-                    temp_conv_file.unlink()
+            # Redis에서 임시 대화 삭제
+            delete_temp_conversation(conversation_id)
             
             return {
                 "forked_scenario_id": forked_scenario_id,
@@ -802,10 +938,8 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
                 "message": "Fork된 시나리오 대화가 저장되었습니다."
             }
         else:  # cancel
-            # 임시 대화 파일 삭제 (Thread-safe)
-            with self._conversations_lock:
-                if temp_conv_file.exists():
-                    temp_conv_file.unlink()
+            # Redis에서 임시 대화 삭제
+            delete_temp_conversation(conversation_id)
             
             return {
                 "forked_scenario_id": forked_scenario_id,

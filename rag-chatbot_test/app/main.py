@@ -5,14 +5,19 @@ RAG 기반 "What If" 챗봇 API 서버
 Story 1.3 기본 설정에 맞게 업데이트
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import structlog
 
 from app.config import settings
 from app.middleware import CorrelationIdMiddleware
+from app.exceptions import GajiException, ErrorCode
+from app.dto.response import error_response
 
 # Structlog 설정 (with correlation ID context support)
 structlog.configure(
@@ -90,7 +95,9 @@ app.add_middleware(
 # 라우터 등록
 from app.routers import (
     character_chat, 
-    scenario, 
+    scenario,
+    scenario_proxy,  # Phase 1: Spring Boot 통합
+    scenario_chat,  # Phase 4: AI 대화 통합
     tasks, 
     metrics,
     novel_ingestion,
@@ -99,11 +106,107 @@ from app.routers import (
 )
 app.include_router(character_chat.router)
 app.include_router(scenario.router)  # 시나리오는 기존 기능 유지
+app.include_router(scenario_proxy.router)  # Phase 1: Spring Boot 위임
+app.include_router(scenario_proxy.internal_router)  # 내부 전용 엔드포인트 (JWT 인증 없음)
+app.include_router(scenario_chat.router)  # Phase 4: AI 대화 통합
 app.include_router(tasks.router)
 app.include_router(metrics.router)
 app.include_router(novel_ingestion.router)
 app.include_router(semantic_search.router)
 app.include_router(character_extraction.router)
+
+
+# OpenAPI 스키마 커스터마이징 (JWT Bearer 인증 추가)
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    
+    # JWT Bearer 인증 스키마 추가
+    openapi_schema["components"]["securitySchemes"] = {
+        "bearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "Enter JWT token from Spring Boot /api/v1/auth/login"
+        }
+    }
+    
+    # 모든 엔드포인트에 JWT 인증 적용 (jwt_auth를 사용하는 엔드포인트만)
+    for path_data in openapi_schema.get("paths", {}).values():
+        for operation in path_data.values():
+            if isinstance(operation, dict) and "operationId" in operation:
+                # jwt_auth dependency를 사용하는 엔드포인트에만 보안 적용
+                # scenario_proxy, character_chat 등의 보호된 엔드포인트
+                operation["security"] = [{"bearerAuth": []}]
+    
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
+
+
+# 전역 예외 핸들러
+@app.exception_handler(GajiException)
+async def gaji_exception_handler(request: Request, exc: GajiException):
+    """커스텀 예외 핸들러"""
+    logger.warning(
+        "gaji_exception",
+        error_code=exc.error_code.code,
+        message=exc.error_code.message,
+        details=exc.details,
+        path=request.url.path
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=error_response(
+            error_code=exc.error_code.code,
+            message=exc.error_code.message if not exc.detail.get("message") else exc.detail["message"],
+            details=exc.details
+        )
+    )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """입력 검증 실패 핸들러"""
+    logger.warning(
+        "validation_error",
+        errors=exc.errors(),
+        path=request.url.path
+    )
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content=error_response(
+            error_code=ErrorCode.INVALID_INPUT.code,
+            message="Input validation failed",
+            details={"errors": exc.errors()}
+        )
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """일반 예외 핸들러 (catch-all)"""
+    logger.error(
+        "unexpected_error",
+        error=str(exc),
+        error_type=type(exc).__name__,
+        path=request.url.path,
+        exc_info=True
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=error_response(
+            error_code=ErrorCode.INTERNAL_SERVER_ERROR.code,
+            message="An unexpected error occurred",
+            details={"error_type": type(exc).__name__}
+        )
+    )
 
 
 @app.get("/", tags=["health"], summary="API 정보", description="API 기본 정보 및 엔드포인트 목록을 반환합니다.")

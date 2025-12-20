@@ -46,10 +46,19 @@ class Settings(BaseSettings):
     fastapi_host: str = "0.0.0.0"
     fastapi_port: int = 8000
     
+    # Spring Boot Integration
+    spring_boot_base_url: str = "http://host.docker.internal:8080"  # Access host machine from container
+    spring_boot_timeout: int = 30
+    
+    # JWT Authentication
+    jwt_secret_key: str = ""  # Spring Boot와 동일한 키 사용
+    jwt_algorithm: str = "HS384"  # Spring Boot와 동일한 알고리즘
+    
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False
+        extra = "ignore"  # 정의되지 않은 환경 변수 무시
     
     def get_cors_origins(self) -> List[str]:
         """CORS 허용 origin 리스트 반환"""

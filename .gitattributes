@@ -1,0 +1,20 @@
+# 줄바꿈 문자 자동 관리
+# 모든 텍스트 파일은 LF로 통일 (Unix 스타일)
+* text=auto eol=lf
+
+# 특정 파일 타입은 그대로 유지
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.sh text eol=lf
+
+# 바이너리 파일은 줄바꿈 변환 제외
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.tar.gz binary
+

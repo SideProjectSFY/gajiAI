@@ -7,10 +7,17 @@ Gemini File Search를 활용하여 책 속 인물과 대화합니다.
 import json
 import uuid
 import threading
+import asyncio
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 from app.services.base_chat_service import BaseChatService
+from app.config.redis_client import (
+    save_temp_conversation,
+    get_temp_conversation,
+    delete_temp_conversation,
+    exists_temp_conversation
+)
 from app.services.character_data_loader import CharacterDataLoader
 
 
@@ -33,15 +40,8 @@ class CharacterChatService(BaseChatService):
         current_file = Path(__file__)
         self.project_root = current_file.parent.parent.parent
         
-        # 임시 대화 저장 디렉토리 (파일 기반) - 시나리오 대화와 동일한 위치
-        self.temp_conversations_dir = self.project_root / "data" / "scenarios" / "temp_conversations"
-        self.temp_conversations_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Thread-safe를 위한 Lock
-        self._conversations_lock = threading.Lock()
-        
-        # TTL 설정: 1시간 후 자동 삭제
-        self.conversation_ttl = timedelta(hours=1)
+        # TTL 설정: 1시간 후 자동 삭제 (Redis TTL은 초 단위)
+        self.conversation_ttl_seconds = 3600  # 1시간
         
         # 최대 턴 수
         self.max_turns = 5
@@ -207,48 +207,30 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
                 other_main_character
             )
         
-        # 오래된 임시 대화 정리 (TTL 체크)
-        self._cleanup_expired_conversations()
-        
         # 임시 대화 로드 또는 새로 생성
-        with self._conversations_lock:
-            if conversation_id:
-                # 파일에서 임시 대화 로드
-                temp_conv_file = self.temp_conversations_dir / f"{conversation_id}.json"
-                if not temp_conv_file.exists():
-                    return {
-                        'error': f"임시 대화를 찾을 수 없습니다: {conversation_id}",
-                        'character_name': character['character_name']
-                    }
-                
-                with open(temp_conv_file, 'r', encoding='utf-8') as f:
-                    temp_conv = json.load(f)
-                
-                # 캐릭터 일치 확인
-                if temp_conv.get('character_name') != character_name or temp_conv.get('book_title') != book_title:
-                    return {
-                        'error': f"임시 대화의 캐릭터와 일치하지 않습니다. (대화: {temp_conv.get('character_name')}, 요청: {character_name})",
-                        'character_name': character['character_name']
-                    }
-                
-                # TTL 체크
-                created_at_str = temp_conv.get("created_at", "")
-                if created_at_str:
-                    created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
-                    created_at_utc = created_at.replace(tzinfo=None)
-                    if datetime.utcnow() - created_at_utc > self.conversation_ttl:
-                        temp_conv_file.unlink()  # 파일 삭제
-                        return {
-                            'error': f"임시 대화가 만료되었습니다: {conversation_id}",
-                            'character_name': character['character_name']
-                        }
-                
-                messages = temp_conv.get("messages", [])
-                turn_count = temp_conv.get("turn_count", 0)
-            else:
-                conversation_id = str(uuid.uuid4())
-                messages = []
-                turn_count = 0
+        if conversation_id:
+            # Redis에서 임시 대화 로드
+            temp_conv = get_temp_conversation(conversation_id)
+            if not temp_conv:
+                return {
+                    'error': f"임시 대화를 찾을 수 없습니다: {conversation_id}",
+                    'character_name': character['character_name']
+                }
+            
+            # 캐릭터 일치 확인
+            if temp_conv.get('character_name') != character_name or temp_conv.get('book_title') != book_title:
+                return {
+                    'error': f"임시 대화의 캐릭터와 일치하지 않습니다. (대화: {temp_conv.get('character_name')}, 요청: {character_name})",
+                    'character_name': character['character_name']
+                }
+            
+            # Redis TTL이 자동으로 관리되므로 만료 체크 불필요
+            messages = temp_conv.get("messages", [])
+            turn_count = temp_conv.get("turn_count", 0)
+        else:
+            conversation_id = str(uuid.uuid4())
+            messages = []
+            turn_count = 0
         
         # 턴 수 체크
         if turn_count >= self.max_turns:
@@ -289,6 +271,7 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
         
         # 공통 API 호출 로직 사용
         try:
+            
             response = self._call_gemini_api(
                 contents=contents,
                 system_instruction=system_instruction,
@@ -302,11 +285,13 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
             result = self._extract_response(response)
             
         except ValueError as e:
+            
             return {
                 'error': str(e),
                 'character_name': character['character_name']
             }
         except Exception as e:
+            
             return {
                 'error': f"응답 생성 실패: {str(e)}",
                 'character_name': character['character_name']
@@ -336,7 +321,7 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
                 "book_title": other_main_character.get("book_title")
             }
         
-        # 임시 저장 (파일 기반, Thread-safe)
+        # Redis에 임시 저장
         temp_conv_data = {
             "character_name": character['character_name'],
             "book_title": character['book_title'],
@@ -347,10 +332,7 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
             "created_at": datetime.utcnow().isoformat() + "Z"
         }
         
-        with self._conversations_lock:
-            temp_conv_file = self.temp_conversations_dir / f"{conversation_id}.json"
-            with open(temp_conv_file, 'w', encoding='utf-8') as f:
-                json.dump(temp_conv_data, f, ensure_ascii=False, indent=2)
+        save_temp_conversation(conversation_id, temp_conv_data, self.conversation_ttl_seconds)
         
         return {
             'response': result['response'],
@@ -365,35 +347,9 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
     
     def _cleanup_expired_conversations(self):
         """
-        만료된 임시 대화 파일 정리 (TTL 체크)
-        Thread-safe하게 실행됨
+        만료된 임시 대화 정리 (Redis TTL이 자동으로 관리되므로 불필요)
+        레거시 호환성을 위해 유지 (빈 함수)
         """
-        now = datetime.utcnow()
-        expired_files = []
-        
-        with self._conversations_lock:
-            # 모든 임시 대화 파일 확인
-            for conv_file in self.temp_conversations_dir.glob("*.json"):
-                try:
-                    with open(conv_file, 'r', encoding='utf-8') as f:
-                        conv_data = json.load(f)
-                    
-                    created_at_str = conv_data.get("created_at", "")
-                    if created_at_str:
-                        # ISO 형식 파싱 (Z 제거 후 UTC로 처리)
-                        created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
-                        created_at_utc = created_at.replace(tzinfo=None)
-                        
-                        if now - created_at_utc > self.conversation_ttl:
-                            expired_files.append(conv_file)
-                except (json.JSONDecodeError, ValueError, KeyError):
-                    # 잘못된 파일은 삭제
-                    expired_files.append(conv_file)
-            
-            # 만료된 파일 삭제
-            for file_path in expired_files:
-                try:
-                    file_path.unlink()
-                except Exception:
-                    pass  # 삭제 실패는 무시
+        # Redis TTL이 자동으로 만료된 키를 삭제하므로 수동 정리 불필요
+        pass
     
