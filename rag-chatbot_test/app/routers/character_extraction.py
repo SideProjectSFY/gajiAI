@@ -54,12 +54,73 @@ def _find_novel_file_path(novel_id: str) -> Optional[str]:
     """
     novel_id로 소설 파일 경로 찾기
     
+    우선순위:
+    1. DB에서 gutenberg_id로 조회 (Spring Boot API)
+    2. 로컬 saved_books_info.json에서 조회 (fallback)
+    
     Args:
         novel_id: 소설 ID (Gutenberg ID)
     
     Returns:
         파일 경로 또는 None
     """
+    # Try DB first
+    try:
+        import asyncio
+        from app.services.spring_boot_client import spring_boot_client
+        
+        # Gutenberg ID로 Spring Boot API에서 novel 조회
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        try:
+            # Gutenberg ID가 숫자인지 확인
+            gutenberg_id = int(novel_id)
+            novel = loop.run_until_complete(
+                spring_boot_client.get_novel_by_gutenberg_id(gutenberg_id)
+            )
+            
+            if novel:
+                # DB에서 찾은 경우, 로컬 파일 경로 생성
+                title = novel.get('title', '')
+                current_file = Path(__file__)
+                project_root = current_file.parent.parent.parent
+                origin_txt_dir = project_root / "data" / "origin_txt"
+                
+                # 파일 경로 후보들
+                # 1. {gutenberg_id}_{title}.txt 형식
+                txt_file = origin_txt_dir / f"{gutenberg_id}_{title}.txt"
+                if txt_file.exists():
+                    logger.info("novel_file_found_from_db", novel_id=novel_id, path=str(txt_file))
+                    return str(txt_file)
+                
+                # 2. 타이틀에서 특수문자 제거한 버전
+                safe_title = title.replace(':', '').replace('/', '').replace('?', '')
+                txt_file = origin_txt_dir / f"{gutenberg_id}_{safe_title}.txt"
+                if txt_file.exists():
+                    logger.info("novel_file_found_from_db", novel_id=novel_id, path=str(txt_file))
+                    return str(txt_file)
+                
+                # 3. origin_txt 디렉토리에서 gutenberg_id로 시작하는 파일 찾기
+                for file in origin_txt_dir.glob(f"{gutenberg_id}_*.txt"):
+                    logger.info("novel_file_found_from_db", novel_id=novel_id, path=str(file))
+                    return str(file)
+                
+                logger.warning("novel_in_db_but_file_not_found", novel_id=novel_id, title=title)
+        
+        except ValueError:
+            # novel_id가 숫자가 아닌 경우
+            pass
+        except Exception as e:
+            logger.warning("db_lookup_failed_fallback_to_local", error=str(e))
+    
+    except Exception as e:
+        logger.warning("db_import_failed_fallback_to_local", error=str(e))
+    
+    # Fallback to local saved_books_info.json
     try:
         # 프로젝트 루트 찾기
         current_file = Path(__file__)

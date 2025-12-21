@@ -7,6 +7,7 @@ Gemini API Key Manager
 import os
 import time
 import random
+import threading
 from typing import List, Optional
 from dotenv import load_dotenv
 
@@ -41,6 +42,12 @@ class APIKeyManager:
         
         # 실패한 키 재시도 대기 시간 (초)
         self.retry_delay = 300  # 5분
+        
+        # Thread-safety를 위한 Lock
+        self._lock = threading.Lock()
+        
+        # 키 선택 카운터 (라운드로빈 방식)
+        self._key_selection_counter = 0
         
         # 초기 키 선택 풀 크기 설정
         if initial_key_pool_size is None:
@@ -115,9 +122,51 @@ class APIKeyManager:
         # 랜덤 선택
         return random.choice(available_indices)
     
-    def get_current_key(self) -> str:
-        """현재 사용 중인 API 키 반환"""
-        return self.api_keys[self.current_key_index]
+    def get_current_key(self, use_round_robin: bool = True) -> str:
+        """현재 사용 중인 API 키 반환
+        
+        Args:
+            use_round_robin: True면 라운드로빈 방식으로 키 선택, False면 현재 키 반환
+                            (기본값: True - 여러 사용자가 동시에 접근할 때 키 분산)
+        
+        Returns:
+            API 키 문자열
+        """
+        if use_round_robin:
+            # 라운드로빈 방식으로 키 선택 (동시 접근 시 키 분산)
+            with self._lock:
+                available_indices = self._get_available_key_indices()
+                if not available_indices:
+                    # 사용 가능한 키가 없으면 현재 키 반환
+                    return self.api_keys[self.current_key_index]
+                
+                # 라운드로빈 방식으로 선택
+                selected_index = available_indices[self._key_selection_counter % len(available_indices)]
+                self._key_selection_counter += 1
+                return self.api_keys[selected_index]
+        else:
+            # 기존 방식 (현재 키 반환)
+            return self.api_keys[self.current_key_index]
+    
+    def _get_available_key_indices(self) -> List[int]:
+        """사용 가능한 키 인덱스 목록 반환"""
+        current_time = time.time()
+        available = []
+        
+        for i in range(len(self.api_keys)):
+            # 실패한 키인지 확인
+            if i in self.failed_keys:
+                failed_time = self.failed_keys[i]
+                # 재시도 대기 시간이 지났는지 확인
+                if current_time - failed_time < self.retry_delay:
+                    continue
+                else:
+                    # 대기 시간이 지났으면 실패 기록 제거
+                    del self.failed_keys[i]
+            
+            available.append(i)
+        
+        return available if available else [self.current_key_index]
     
     def _is_quota_error(self, error: Exception) -> bool:
         """할당량 초과 에러인지 확인"""
@@ -133,25 +182,16 @@ class APIKeyManager:
     
     def _get_next_available_key_index(self) -> Optional[int]:
         """사용 가능한 다음 키 인덱스 찾기"""
-        current_time = time.time()
+        available_indices = self._get_available_key_indices()
         
-        # 모든 키를 순회하며 사용 가능한 키 찾기
-        for i in range(len(self.api_keys)):
-            next_index = (self.current_key_index + i + 1) % len(self.api_keys)
-            
-            # 실패한 키인지 확인
-            if next_index in self.failed_keys:
-                failed_time = self.failed_keys[next_index]
-                # 재시도 대기 시간이 지났는지 확인
-                if current_time - failed_time < self.retry_delay:
-                    continue
-                else:
-                    # 대기 시간이 지났으면 실패 기록 제거
-                    del self.failed_keys[next_index]
-            
-            return next_index
+        if not available_indices:
+            return None
         
-        return None
+        # 현재 키 다음 사용 가능한 키 찾기
+        current_pos = available_indices.index(self.current_key_index) if self.current_key_index in available_indices else -1
+        next_pos = (current_pos + 1) % len(available_indices)
+        
+        return available_indices[next_pos]
     
     def switch_to_next_key(self, mark_current_as_failed: bool = True) -> bool:
         """다음 사용 가능한 키로 전환
@@ -162,18 +202,19 @@ class APIKeyManager:
         Returns:
             성공 여부 (True: 전환 성공, False: 사용 가능한 키 없음)
         """
-        next_index = self._get_next_available_key_index()
-        
-        if next_index is None:
-            return False
-        
-        # 현재 키를 실패 목록에 추가 (에러 발생 시에만)
-        if mark_current_as_failed:
-            self.failed_keys[self.current_key_index] = time.time()
-        
-        # 키 전환
-        self.current_key_index = next_index
-        return True
+        with self._lock:
+            next_index = self._get_next_available_key_index()
+            
+            if next_index is None:
+                return False
+            
+            # 현재 키를 실패 목록에 추가 (에러 발생 시에만)
+            if mark_current_as_failed:
+                self.failed_keys[self.current_key_index] = time.time()
+            
+            # 키 전환
+            self.current_key_index = next_index
+            return True
     
     def mark_key_failed(self, api_key: str):
         """특정 API 키를 실패로 표시하고 다음 키로 전환

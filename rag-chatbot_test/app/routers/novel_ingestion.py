@@ -10,9 +10,13 @@ from typing import Optional, Dict
 from uuid import UUID
 import uuid
 from datetime import datetime, timezone
+import structlog
 
 from app.tasks.novel_ingestion import embed_novel_task
 from app.config.redis_client import get_task_status
+from app.services.spring_boot_client import spring_boot_client
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/ai/novels", tags=["novel-ingestion"])
 
@@ -64,13 +68,40 @@ async def ingest_novel(
         # 작업 ID 생성
         job_id = f"ingest-{uuid.uuid4()}"
         
-        # Celery 태스크 시작
-        # TODO: 실제 구현 시 Spring Boot Internal API를 통해 novel_id 생성
-        # novel_id = await create_novel_metadata(request.metadata)
+        # Step 1: Spring Boot Internal API를 통해 novel_id 생성
+        try:
+            novel_data = {
+                "title": request.metadata.get("title", "Unknown"),
+                "author": request.metadata.get("author", "Unknown"),
+                "publicationYear": request.metadata.get("publication_year"),
+                "genre": request.metadata.get("genre"),
+                "vectordbCollectionId": f"novel_{uuid.uuid4().hex[:12]}",
+                "ingestionStatus": "pending",
+                "totalPassagesCount": 0,
+                "totalCharactersCount": 0
+            }
+            
+            novel_response = await spring_boot_client.create_novel(novel_data, jwt_token=None)
+            novel_id = novel_response.get("id")
+            
+            logger.info(
+                "novel_metadata_created",
+                job_id=job_id,
+                novel_id=novel_id,
+                title=novel_data["title"]
+            )
+            
+        except Exception as e:
+            logger.error("novel_metadata_creation_failed", job_id=job_id, error=str(e))
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create novel metadata: {str(e)}"
+            )
         
+        # Step 2: Celery 태스크 시작 (VectorDB 임베딩)
         task = embed_novel_task.delay(
             task_id=job_id,
-            novel_id="",  # TODO: Spring Boot에서 받은 novel_id 사용
+            novel_id=novel_id,  # Spring Boot에서 받은 novel_id 사용
             novel_file_path=request.novel_file_path,
             metadata=request.metadata
         )
@@ -79,9 +110,12 @@ async def ingest_novel(
             job_id=job_id,
             status="processing",
             estimated_duration_minutes=15,
-            message=f"Novel ingestion started. Check status at /api/ai/novels/status/{job_id}"
+            message=f"Novel ingestion started. Novel ID: {novel_id}. Check status at /api/ai/novels/status/{job_id}"
         )
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error("novel_ingestion_start_failed", error=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=f"소설 임베딩 시작 실패: {str(e)}")
 
 

@@ -216,6 +216,17 @@ class SpringBootClient:
             jwt_token=None
         )
     
+    async def get_novel_by_gutenberg_id(
+        self,
+        gutenberg_id: int
+    ) -> Dict[str, Any]:
+        """Gutenberg ID로 소설 메타데이터 조회 (내부 전용, JWT 토큰 불필요)"""
+        return await self._request(
+            "GET",
+            f"/api/v1/internal/novels/by-gutenberg/{gutenberg_id}",
+            jwt_token=None
+        )
+    
     async def get_characters_by_novel_internal(
         self,
         novel_id: str
@@ -230,6 +241,39 @@ class SpringBootClient:
         if isinstance(response, list):
             return response
         return response.get("data", []) if isinstance(response, dict) else []
+    
+    async def get_all_novels_with_characters(self) -> List[Dict[str, Any]]:
+        """모든 소설과 그 캐릭터들을 조회 (내부 전용)
+        
+        Returns:
+            List of novels with their characters embedded
+        """
+        novels_with_chars = []
+        
+        # Step 1: 모든 소설 조회 (gutenberg_id가 있는 것만)
+        # 현재는 개별 novel 조회만 가능하므로, 알려진 gutenberg_id로 조회
+        known_gutenberg_ids = [84, 1342, 64317, 1513, 74, 1661]
+        
+        for gutenberg_id in known_gutenberg_ids:
+            try:
+                novel = await self.get_novel_by_gutenberg_id(gutenberg_id)
+                novel_id = novel.get('id')
+                
+                if novel_id:
+                    # Step 2: 각 소설의 캐릭터 조회
+                    characters = await self.get_characters_by_novel_internal(novel_id)
+                    novel['characters'] = characters
+                    novels_with_chars.append(novel)
+                    
+            except Exception as e:
+                logger.warning(
+                    "failed_to_load_novel",
+                    gutenberg_id=gutenberg_id,
+                    error=str(e)
+                )
+                continue
+        
+        return novels_with_chars
 
 spring_boot_client = SpringBootClient()
 

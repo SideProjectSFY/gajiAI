@@ -2,24 +2,94 @@
 캐릭터 데이터 로더
 
 캐릭터 정보 로드 및 조회 기능을 제공하는 유틸리티 클래스
+DB 기반 (Spring Boot API 사용)
 """
 
 import json
 from pathlib import Path
 from typing import List, Dict, Optional
+import asyncio
+from app.services.spring_boot_client import spring_boot_client
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 
 class CharacterDataLoader:
-    """캐릭터 데이터 로드 전용 유틸리티"""
+    """캐릭터 데이터 로드 전용 유틸리티 (DB 기반)"""
+    
+    @staticmethod
+    async def load_characters_from_db() -> List[Dict]:
+        """DB에서 모든 캐릭터 정보 로드 (Spring Boot API 사용)
+        
+        Returns:
+            캐릭터 목록 (book_title, author 포함)
+        """
+        try:
+            novels_with_chars = await spring_boot_client.get_all_novels_with_characters()
+            
+            all_characters = []
+            for novel in novels_with_chars:
+                book_title = novel.get('title', '')
+                author = novel.get('author', '')
+                novel_id = novel.get('id', '')
+                
+                for char in novel.get('characters', []):
+                    # Spring Boot API 응답 형식을 로컬 형식으로 변환
+                    character_dict = {
+                        'id': char.get('id'),
+                        'novel_id': novel_id,
+                        'character_name': char.get('commonName', ''),  # commonName -> character_name
+                        'common_name': char.get('commonName', ''),
+                        'is_main_character': char.get('isMainCharacter', False),
+                        'alternative_names': char.get('alternativeNames', []),
+                        'description': char.get('description', ''),
+                        'portrait_prompt': char.get('portraitPrompt', ''),
+                        'persona': char.get('persona', ''),
+                        'persona_en': char.get('personaEn', ''),
+                        'persona_ko': char.get('personaKo', ''),
+                        'speaking_style': char.get('speakingStyle', ''),
+                        'speaking_style_en': char.get('speakingStyleEn', ''),
+                        'speaking_style_ko': char.get('speakingStyleKo', ''),
+                        'vectordb_character_id': char.get('vectordbCharacterId', ''),
+                        'book_title': book_title,
+                        'author': author
+                    }
+                    all_characters.append(character_dict)
+            
+            logger.info("characters_loaded_from_db", count=len(all_characters))
+            return all_characters
+            
+        except Exception as e:
+            logger.error("failed_to_load_characters_from_db", error=str(e), exc_info=True)
+            return []
     
     @staticmethod
     def load_characters(path: str = None) -> List[Dict]:
-        """캐릭터 정보 로드
+        """캐릭터 정보 로드 (DB 우선, 실패 시 로컬 파일)
         
         우선순위:
-        1. data/characters/ 폴더의 책별 JSON 파일들 (새 구조)
-        2. data/characters.json (레거시, 호환성 유지)
+        1. DB (Spring Boot API)
+        2. data/characters/ 폴더의 책별 JSON 파일들 (fallback)
+        3. data/characters.json (레거시, fallback)
         """
+        # Try DB first
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        try:
+            characters = loop.run_until_complete(
+                CharacterDataLoader.load_characters_from_db()
+            )
+            if characters:
+                return characters
+        except Exception as e:
+            logger.warning("db_load_failed_fallback_to_local", error=str(e))
+        
+        # Fallback to local files
         current_file = Path(__file__)
         project_root = current_file.parent.parent.parent
         characters_dir = project_root / "data" / "characters"
@@ -54,6 +124,9 @@ class CharacterDataLoader:
                     all_characters = data.get('characters', [])
             except Exception:
                 pass
+        
+        if all_characters:
+            logger.info("characters_loaded_from_local", count=len(all_characters))
         
         return all_characters
     

@@ -97,7 +97,7 @@ graph TD
 - ✅ **Multirepo Structure**: Independent repositories for each service
 
 **📚 Documentation**:
-- [**ARCHITECTURE.md**](./docs/ARCHITECTURE.md) - Complete architecture guide (6 ADRs)
+- [**architecture.md**](./architecture.md) - Complete architecture guide (System Architecture Document)
 - [**IMPLEMENTATION_ROADMAP.md**](./docs/IMPLEMENTATION_ROADMAP.md) - Next steps & timeline
 - [**BACKEND_OPTIMIZATION.md**](./docs/BACKEND_OPTIMIZATION.md) - 7 performance strategies
 - [**DATABASE_STRATEGY.md**](./docs/DATABASE_STRATEGY.md) - Hybrid database design
@@ -222,7 +222,7 @@ We're a passionate team of developers building the future of interactive storyte
 ## 📞 Documentation & Resources
 
 ### 📂 Core Documentation
-- [**ARCHITECTURE.md**](./docs/ARCHITECTURE.md) - System architecture & ADRs
+- [**architecture.md**](./architecture.md) - System architecture & ADRs
 - [**IMPLEMENTATION_ROADMAP.md**](./docs/IMPLEMENTATION_ROADMAP.md) - Next steps & timeline
 - [**CLAUDE.md**](./CLAUDE.md) - AI development guide
 

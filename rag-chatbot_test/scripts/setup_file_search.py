@@ -16,29 +16,33 @@ from google.genai import types
 load_dotenv()
 
 def get_all_api_keys():
-    """모든 API 키 가져오기"""
+    """모든 API 키 가져오기 (최대 10개)"""
     keys = []
     
-    # 방법 1: GEMINI_API_KEYS (쉼표로 구분)
+    # 방법 1: GEMINI_API_KEYS (쉼표로 구분) - 우선순위 1
     keys_str = os.getenv("GEMINI_API_KEYS")
     if keys_str:
         keys = [k.strip() for k in keys_str.split(',') if k.strip()]
+        print(f"[API 키] GEMINI_API_KEYS에서 {len(keys)}개 키 발견")
     
-    # 방법 2: GEMINI_API_KEY_1, GEMINI_API_KEY_2, ...
+    # 방법 2: GEMINI_API_KEY_1, GEMINI_API_KEY_2, ... (최대 10개까지)
     if not keys:
-        i = 1
-        while True:
+        for i in range(1, 11):  # 1부터 10까지
             key = os.getenv(f"GEMINI_API_KEY_{i}")
-            if not key:
-                break
-            keys.append(key)
-            i += 1
+            if key:
+                keys.append(key)
+        if keys:
+            print(f"[API 키] GEMINI_API_KEY_1~10에서 {len(keys)}개 키 발견")
     
     # 방법 3: 레거시 단일 키 (GEMINI_API_KEY)
     if not keys:
         legacy_key = os.getenv("GEMINI_API_KEY")
         if legacy_key:
             keys.append(legacy_key)
+            print(f"[API 키] GEMINI_API_KEY에서 1개 키 발견")
+    
+    # 중복 제거
+    keys = list(dict.fromkeys(keys))  # 순서 유지하면서 중복 제거
     
     return keys
 
@@ -112,11 +116,12 @@ def upload_book_to_store(
     book_path: str,
     book_info: dict
 ):
-    """책을 File Search Store에 업로드"""
+    """책을 File Search Store에 업로드 (에러 발생 시 즉시 실패, 다음 키로 전환)"""
     print(f"\n[업로드] {book_info['title']} (ID: {book_info['gutenberg_id']})")
     
     try:
         # 파일 업로드 및 임포트
+        print(f"  [업로드] 업로드 시작...")
         operation = client.file_search_stores.upload_to_file_search_store(
             file=book_path,
             file_search_store_name=store_name,
@@ -133,25 +138,28 @@ def upload_book_to_store(
         
         # 업로드 완료 대기
         print(f"  [대기] 임포트 처리 중...")
-        retry_count = 0
-        max_retries = 60  # 최대 5분 대기
+        wait_count = 0
+        max_wait_retries = 180  # 최대 15분 대기 (5초 * 180)
         
-        while not operation.done and retry_count < max_retries:
+        while not operation.done and wait_count < max_wait_retries:
             time.sleep(5)
             operation = client.operations.get(operation)
-            retry_count += 1
-            if retry_count % 6 == 0:  # 30초마다 진행상황 출력
-                print(f"  [진행] {retry_count * 5}초 경과...")
+            wait_count += 1
+            if wait_count % 12 == 0:  # 1분마다 진행상황 출력
+                print(f"  [진행] {wait_count * 5}초 경과...")
         
         if operation.done:
             print(f"  [완료] 업로드 완료!")
             return True
         else:
-            print(f"  [경고] 타임아웃 (5분 초과)")
+            print(f"  [경고] 타임아웃 (15분 초과)")
             return False
             
     except Exception as e:
-        print(f"  [오류] 업로드 실패: {e}")
+        error_str = str(e)
+        print(f"  [오류] 업로드 실패: {error_str[:100]}")
+        # 에러 발생 시 즉시 실패하고 다음 키로 전환
+        print(f"  [건너뛰기] 다음 키로 전환합니다.")
         return False
 
 def load_store_info(api_key_index: int = None):
@@ -273,11 +281,24 @@ def main():
     script_dir = Path(__file__).parent
     project_root = script_dir.parent
     
+    # 모든 API 키 사용 (각 키마다 모든 책 업로드)
+    print(f"\n[정보] 총 {len(api_keys)}개 API 키를 모두 사용합니다.")
+    print(f"       각 API 키마다 {len(selected_books)}개 책을 모두 업로드합니다.")
+    print(f"       Rate Limit 발생 시 다음 키로 전환합니다.")
+    
+    if len(api_keys) < 10:
+        print(f"\n[경고] API 키가 {len(api_keys)}개만 발견되었습니다.")
+        print(f"       10개 키를 모두 사용하려면 .env 파일에 GEMINI_API_KEYS를 설정하세요.")
+        print(f"       형식: GEMINI_API_KEYS=key1,key2,key3,...,key10")
+    
     # 각 API 키에 대해 Store 생성 및 업로드
     total_success = 0
     total_failed = 0
     
-    for key_index, api_key in enumerate(api_keys):
+    # 모든 키 사용
+    api_keys_to_use = [(i, api_keys[i]) for i in range(len(api_keys))]
+    
+    for key_index, api_key in api_keys_to_use:
         print("\n" + "="*70)
         print(f"API 키 #{key_index + 1} 처리 중...")
         print("="*70)
@@ -303,8 +324,31 @@ def main():
                 print(f"  2. 또는 pip install google-genai==1.0.0")
                 raise AttributeError("file_search_stores 속성을 찾을 수 없습니다. google-genai 라이브러리 버전을 확인하세요.")
             
-            # File Search Store 생성
-            store = create_file_search_store(client, reset=args.reset)
+            # File Search Store 생성 (키별로 별도 Store)
+            store_name = f"novel-characters-store-key{key_index + 1}"
+            
+            # Store 생성 시 503 에러 재시도
+            max_store_retries = 3
+            store = None
+            for store_attempt in range(1, max_store_retries + 1):
+                try:
+                    store = create_file_search_store(client, store_name=store_name, reset=args.reset)
+                    break
+                except Exception as store_error:
+                    error_str = str(store_error)
+                    if "503" in error_str or "unavailable" in error_str.lower():
+                        if store_attempt < max_store_retries:
+                            wait_seconds = 60 * store_attempt
+                            print(f"[대기] Store 생성 실패 (503). {wait_seconds}초 후 재시도... ({store_attempt}/{max_store_retries})")
+                            time.sleep(wait_seconds)
+                            continue
+                        else:
+                            raise
+                    else:
+                        raise
+            
+            if store is None:
+                raise Exception("Store 생성 실패")
             
             # 이미 업로드된 책 확인 (reset이 아닐 때만)
             already_uploaded = set()
@@ -314,7 +358,8 @@ def main():
                     already_uploaded = {book['gutenberg_id'] for book in store_info.get('uploaded_books', [])}
                     print(f"[확인] 이미 업로드된 책: {len(already_uploaded)}개")
             
-            # 업로드할 책 필터링
+            # 각 키마다 모든 책 업로드 (분산하지 않음)
+            # 업로드할 책 필터링 (이미 업로드된 것 제외)
             books_to_upload = [b for b in selected_books if b['gutenberg_id'] not in already_uploaded]
             
             if not books_to_upload:
@@ -338,9 +383,15 @@ def main():
                 if store_info:
                     uploaded_books = store_info.get('uploaded_books', [])
             
-            for book in books_to_upload:
+            for book_idx, book in enumerate(books_to_upload, 1):
+                print(f"\n{'='*70}")
+                print(f"[{book_idx}/{len(books_to_upload)}] {book['title']} 처리 중...")
+                print(f"{'='*70}")
+                
                 # 파일 경로 처리 (프로젝트 루트 기준)
-                book_path = Path(book['filepath'])
+                # Windows 경로 처리: 백슬래시를 슬래시로 변환
+                filepath = book['filepath'].replace('\\', '/')
+                book_path = Path(filepath)
                 
                 # 상대 경로면 프로젝트 루트 기준으로 변환
                 if not book_path.is_absolute():
@@ -348,16 +399,27 @@ def main():
                 
                 # 파일이 없으면 origin_txt에서 찾기
                 if not book_path.exists():
-                    # data\XXX.txt -> data\origin_txt\XXX.txt
-                    if len(book_path.parts) >= 2 and book_path.parts[-2] == 'data':
-                        book_path = project_root / 'data' / 'origin_txt' / book_path.parts[-1]
+                    # 파일명만 추출하여 origin_txt에서 찾기
+                    filename = book_path.name
+                    book_path = project_root / 'data' / 'origin_txt' / filename
                 
                 if not book_path.exists():
-                    print(f"\n[건너뛰기] 파일 없음: {book['filepath']}")
-                    print(f"  시도한 경로: {book_path}")
+                    print(f"[건너뛰기] 파일 없음: {book['filepath']}")
+                    print(f"  시도한 경로 1: {project_root / filepath}")
+                    print(f"  시도한 경로 2: {book_path}")
                     continue
                 
-                success = upload_book_to_store(client, store.name, str(book_path), book)
+                # 파일 크기 확인
+                file_size_mb = book_path.stat().st_size / (1024 * 1024)
+                print(f"[파일] 크기: {file_size_mb:.2f} MB")
+                
+                # 업로드 시도 (에러 발생 시 다음 키로 전환)
+                success = upload_book_to_store(
+                    client, 
+                    store.name, 
+                    str(book_path), 
+                    book
+                )
                 
                 if success:
                     uploaded_books.append({
@@ -367,22 +429,40 @@ def main():
                         'filepath': book['filepath']
                     })
                     success_count += 1
+                    print(f"[성공] {book['title']} 업로드 완료!")
+                else:
+                    print(f"[실패] {book['title']} 업로드 실패. 다음 파일로 진행...")
                 
-                # API 제한 고려 (너무 빠르게 요청하지 않기)
-                time.sleep(2)
+                # API 제한 고려 (각 파일 업로드 사이에 대기 시간)
+                if book_idx < len(books_to_upload):
+                    wait_seconds = 60  # 1분 대기
+                    print(f"\n[대기] 다음 파일 업로드 전 {wait_seconds}초({wait_seconds//60}분) 대기...")
+                    time.sleep(wait_seconds)
             
             # 결과 저장
             save_store_info(store, uploaded_books, api_key_index=key_index, reset=args.reset)
             
             print(f"\n[완료] API 키 #{key_index + 1} 업로드 완료!")
-            print(f"  - 성공: {success_count}/{len(selected_books)}개")
+            print(f"  - 전체 책: {len(selected_books)}개")
+            print(f"  - 성공: {success_count}/{len(books_to_upload)}개")
             print(f"  - 스토어: {store.name}")
             
             total_success += success_count
             
+            # 키 간 전환 시 대기 시간 (Rate Limit 방지)
+            if key_index < len(api_keys) - 1:
+                wait_seconds = 120  # 2분 대기
+                print(f"\n[대기] 다음 키로 전환 전 {wait_seconds}초({wait_seconds//60}분) 대기...")
+                time.sleep(wait_seconds)
+            
         except Exception as e:
             print(f"\n[오류] API 키 #{key_index + 1} 처리 실패: {e}")
             total_failed += len(selected_books)
+            # 오류 발생 시에도 다음 키로 전환 전 대기
+            if key_index < len(api_keys) - 1:
+                wait_seconds = 120
+                print(f"[대기] 다음 키로 전환 전 {wait_seconds}초 대기...")
+                time.sleep(wait_seconds)
             continue
     
     # 전체 결과 출력
