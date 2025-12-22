@@ -5,6 +5,7 @@ Long Polling 및 Celery 브로커용 Redis 클라이언트
 """
 
 import redis
+import json
 from typing import Optional
 from app.config import settings
 import logging
@@ -239,14 +240,19 @@ def save_temp_conversation(conversation_id: str, conversation_data: dict, ttl: i
         성공 여부
     """
     try:
+        import json as _json
+        import os
+        from datetime import datetime
+        
         client = get_redis_client()
         key = f"temp_conv:{conversation_id}"
         
         # JSON 문자열로 저장
-        client.setex(
+        json_str = json.dumps(conversation_data, ensure_ascii=False)
+        result = client.setex(
             key,
             ttl,
-            json.dumps(conversation_data, ensure_ascii=False)
+            json_str
         )
         
         logger.debug(f"임시 대화 저장: {conversation_id}")
@@ -270,13 +276,13 @@ def get_temp_conversation(conversation_id: str) -> Optional[dict]:
     try:
         client = get_redis_client()
         key = f"temp_conv:{conversation_id}"
-        
         data = client.get(key)
         
         if not data:
             return None
         
-        return json.loads(data)
+        parsed_data = json.loads(data)
+        return parsed_data
         
     except json.JSONDecodeError as e:
         logger.error(f"임시 대화 JSON 파싱 실패 ({conversation_id}): {e}")
