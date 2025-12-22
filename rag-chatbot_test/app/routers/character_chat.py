@@ -221,6 +221,9 @@ async def send_message_to_ai_character(
                     # 다른 주인공이 없으면 제3의 인물로 변경
                     conversation_partner_type = "stranger"
             
+            # 경로의 conversation_id를 우선 사용, 없으면 본문의 conversation_id 사용
+            effective_conversation_id = conversation_id or request.conversation_id
+            
             result = scenario_chat_service.chat_with_scenario(
                 scenario_id=request.scenario_id,
                 user_message=request.message,
@@ -228,7 +231,7 @@ async def send_message_to_ai_character(
                 output_language=request.output_language,
                 is_forked=request.forked_scenario_id is not None,
                 forked_scenario_id=request.forked_scenario_id,
-                conversation_id=request.conversation_id,
+                conversation_id=effective_conversation_id,
                 user_id=request.user_id or "default_user",
                 conversation_partner_type=conversation_partner_type,
                 other_main_character=other_main_character
@@ -261,6 +264,9 @@ async def send_message_to_ai_character(
                     # 다른 주인공이 없으면 제3의 인물로 변경
                     conversation_partner_type = "stranger"
             
+            # 경로의 conversation_id를 우선 사용, 없으면 본문의 conversation_id 사용
+            effective_conversation_id = conversation_id or request.conversation_id
+            
             result = service.chat(
                 character_name=request.character_name,
                 user_message=request.message,
@@ -269,11 +275,14 @@ async def send_message_to_ai_character(
                 output_language=request.output_language,
                 conversation_partner_type=conversation_partner_type,
                 other_main_character=other_main_character,
-                conversation_id=request.conversation_id
+                conversation_id=effective_conversation_id
             )
             
             if 'error' in result:
                 increment_request("/character/chat", success=False)
+                # 할당량 초과 에러는 429로 반환
+                if result.get('error_code') == 'QUOTA_EXCEEDED':
+                    raise HTTPException(status_code=429, detail=result['error'])
                 raise HTTPException(status_code=400, detail=result['error'])
             
             # 메트릭: 캐릭터 대화 증가
