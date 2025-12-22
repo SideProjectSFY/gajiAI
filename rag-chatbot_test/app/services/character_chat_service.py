@@ -211,22 +211,22 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
         if conversation_id:
             # Redis에서 임시 대화 로드
             temp_conv = get_temp_conversation(conversation_id)
+            
             if not temp_conv:
-                return {
-                    'error': f"임시 대화를 찾을 수 없습니다: {conversation_id}",
-                    'character_name': character['character_name']
-                }
-            
-            # 캐릭터 일치 확인
-            if temp_conv.get('character_name') != character_name or temp_conv.get('book_title') != book_title:
-                return {
-                    'error': f"임시 대화의 캐릭터와 일치하지 않습니다. (대화: {temp_conv.get('character_name')}, 요청: {character_name})",
-                    'character_name': character['character_name']
-                }
-            
-            # Redis TTL이 자동으로 관리되므로 만료 체크 불필요
-            messages = temp_conv.get("messages", [])
-            turn_count = temp_conv.get("turn_count", 0)
+                # Redis에 없으면 새 대화 시작 (제공된 conversation_id 사용)
+                messages = []
+                turn_count = 0
+            else:
+                # 캐릭터 일치 확인
+                if temp_conv.get('character_name') != character_name or temp_conv.get('book_title') != book_title:
+                    return {
+                        'error': f"임시 대화의 캐릭터와 일치하지 않습니다. (대화: {temp_conv.get('character_name')}, 요청: {character_name})",
+                        'character_name': character['character_name']
+                    }
+                
+                # Redis TTL이 자동으로 관리되므로 만료 체크 불필요
+                messages = temp_conv.get("messages", [])
+                turn_count = temp_conv.get("turn_count", 0)
         else:
             conversation_id = str(uuid.uuid4())
             messages = []
@@ -271,7 +271,6 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
         
         # 공통 API 호출 로직 사용
         try:
-            
             response = self._call_gemini_api(
                 contents=contents,
                 system_instruction=system_instruction,
@@ -285,13 +284,19 @@ The person you are talking to is a COMPLETE STRANGER - someone you have never me
             result = self._extract_response(response)
             
         except ValueError as e:
-            
+            # 429 에러인 경우 특별 처리
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "할당량" in error_str:
+                return {
+                    'error': f"API 할당량이 초과되었습니다. 잠시 후 다시 시도해주세요. ({error_str})",
+                    'character_name': character['character_name'],
+                    'error_code': 'QUOTA_EXCEEDED'
+                }
             return {
                 'error': str(e),
                 'character_name': character['character_name']
             }
         except Exception as e:
-            
             return {
                 'error': f"응답 생성 실패: {str(e)}",
                 'character_name': character['character_name']
