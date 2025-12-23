@@ -16,10 +16,10 @@ class Settings(BaseSettings):
     gemini_api_keys: str = ""
     
     # CORS
-    cors_allowed_origins: str = "http://localhost:8080"
+    cors_allowed_origins: str = "http://backend:8080"
     
     # Redis
-    redis_host: str = "localhost"
+    redis_host: str = "redis"
     redis_port: int = 6379
     redis_db: int = 0
     redis_password: str = ""

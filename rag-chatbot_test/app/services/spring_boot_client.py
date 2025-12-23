@@ -242,6 +242,20 @@ class SpringBootClient:
             return response
         return response.get("data", []) if isinstance(response, dict) else []
     
+    async def get_scenario_internal(
+        self,
+        scenario_id: str
+    ) -> Dict[str, Any]:
+        """시나리오 조회 (내부 전용, JWT 토큰 불필요)
+        
+        Note: 내부 전용 엔드포인트가 없으므로 public API 사용
+        """
+        return await self._request(
+            "GET",
+            f"/api/v1/scenarios/{scenario_id}",
+            jwt_token=None
+        )
+    
     async def get_all_novels_with_characters(self) -> List[Dict[str, Any]]:
         """모든 소설과 그 캐릭터들을 조회 (내부 전용)
         
@@ -274,6 +288,18 @@ class SpringBootClient:
                 continue
         
         return novels_with_chars
+
+    async def get_character_by_id(
+        self,
+        character_id: str,
+        jwt_token: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """캐릭터 ID로 캐릭터 조회"""
+        return await self._request(
+            "GET",
+            f"/api/v1/characters/{character_id}",
+            jwt_token=jwt_token
+        )
 
 spring_boot_client = SpringBootClient()
 
