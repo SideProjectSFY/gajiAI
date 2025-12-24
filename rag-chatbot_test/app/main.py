@@ -102,13 +102,15 @@ from app.routers import (
     metrics,
     novel_ingestion,
     semantic_search,
-    character_extraction
+    character_extraction,
+    message_generation  # Spring Boot와 통합을 위한 메시지 생성 엔드포인트
 )
 app.include_router(character_chat.router)
 app.include_router(scenario.router)  # 시나리오는 기존 기능 유지
 app.include_router(scenario_proxy.router)  # Phase 1: Spring Boot 위임
 app.include_router(scenario_proxy.internal_router)  # 내부 전용 엔드포인트 (JWT 인증 없음)
 app.include_router(scenario_chat.router)  # Phase 4: AI 대화 통합
+app.include_router(message_generation.router)  # Spring Boot 메시지 생성 통합
 app.include_router(tasks.router)
 app.include_router(metrics.router)
 app.include_router(novel_ingestion.router)

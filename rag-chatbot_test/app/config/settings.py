@@ -16,10 +16,10 @@ class Settings(BaseSettings):
     gemini_api_keys: str = ""
     
     # CORS
-    cors_allowed_origins: str = "http://localhost:8080"
+    cors_allowed_origins: str = "http://backend:8080"
     
     # Redis
-    redis_host: str = "localhost"
+    redis_host: str = "redis"
     redis_port: int = 6379
     redis_db: int = 0
     redis_password: str = ""
@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     
     # JWT Authentication
     jwt_secret_key: str = ""  # Spring Boot와 동일한 키 사용
-    jwt_algorithm: str = "HS384"  # Spring Boot와 동일한 알고리즘
+    jwt_algorithm: str = "HS256"  # Spring Boot와 동일한 알고리즘 (JJWT 기본값)
     
     class Config:
         env_file = ".env"

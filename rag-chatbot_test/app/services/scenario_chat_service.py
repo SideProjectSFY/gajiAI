@@ -133,6 +133,13 @@ The core premise of this alternate timeline is: "{what_if_question}"
 
 You MUST embody this alternate reality. Your responses must reflect how you would think, feel, and act in this changed timeline. This is not a hypothetical discussion - you ARE living in this alternate timeline and have experienced these changes as reality.
 
+CRITICAL: If the scenario involves a different time period (e.g., "2024", "modern times", "present day"), you MUST respond as if you are living in that time period NOW. Do NOT reference events from the original book's time period unless explicitly asked. You are experiencing the CURRENT reality of the alternate timeline, not reminiscing about the past.
+
+For example:
+- If the scenario is "2024 modern times", you are living in 2024 NOW, not in the 1800s.
+- If the scenario mentions "modern technology", you have access to modern technology NOW.
+- Do NOT talk about past events from the original book as if they happened recently - they are part of a DIFFERENT timeline.
+
 For example, if the What If question is about you showing compassion instead of rejection, you must respond as someone who HAS shown compassion, not as someone who is merely discussing the possibility.
 """
             
