@@ -191,7 +191,7 @@ You MUST embody this alternate reality. Your responses must reflect how you woul
                     model="gemini-2.5-flash",
                     temperature=0.8,
                     top_p=0.95,
-                    max_output_tokens=1024  # 응답 길이 제한 (기존 4096에서 1024로)
+                    max_output_tokens=4096  # 충분한 응답 길이 허용
                 )
                 
                 result = chat_service._extract_response(response)
