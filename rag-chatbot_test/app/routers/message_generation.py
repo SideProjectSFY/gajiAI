@@ -89,9 +89,38 @@ async def process_ai_generation(
             status_key = f"task:{conversation_id}:status"
             content_key = f"task:{conversation_id}:content"
             error_key = f"task:{conversation_id}:error"
+            turn_count_key = f"task:{conversation_id}:turn_count"
+            max_turns_key = f"task:{conversation_id}:max_turns"
+            
+            # 턴 정보 계산 (사용자 메시지 수 = 턴 수)
+            # history에서 user 역할의 메시지 수 + 현재 메시지 1개
+            history_user_count = sum(1 for msg in history if msg.role == "user")
+            current_turn = history_user_count + 1
+            
+            # 대화별 max_turns를 Redis에서 가져오거나 설정
+            max_turns_key = f"conversation:{conversation_id}:max_turns"
+            stored_max_turns = r.get(max_turns_key)
+            
+            if stored_max_turns:
+                # 기존에 설정된 max_turns 사용
+                max_turns = int(stored_max_turns)
+            else:
+                # 첫 메시지: max_turns 결정
+                # 포크된 대화 (history에 이미 user 메시지가 있음) → 기존 턴 + 5
+                # 새 대화 (history가 비어있음) → 5턴
+                if history_user_count > 0:
+                    # 포크된 대화: 복사된 턴 수 + 5턴 추가
+                    max_turns = history_user_count + 5
+                else:
+                    # 새 대화 (Root): 기본 5턴
+                    max_turns = 5
+                # Redis에 저장 (1시간 유효)
+                r.setex(max_turns_key, 3600, str(max_turns))
             
             # 초기 상태 저장
             r.setex(status_key, 600, "processing")
+            r.setex(turn_count_key, 600, str(current_turn))
+            r.setex(max_turns_key, 600, str(max_turns))
             
             try:
                 from app.services.base_chat_service import BaseChatService
@@ -152,31 +181,56 @@ You MUST embody this alternate reality. Your responses must reflect how you woul
                 
                 system_prompt += """
 
+【Who You Are Talking To - CRITICAL】
+You are talking to an ANONYMOUS STRANGER who is curious about you.
+- DO NOT assume the user is any character from your story (NOT Watson, NOT any other character)
+- DO NOT call them "박사님", "왓슨", or any character name
+- Treat them as a curious stranger or interviewer asking about your life
+- You may refer to them politely but neutrally (e.g., "친구여", "당신", or simply respond without addressing them directly)
+
 【Response Guidelines】
 - You must respond in Korean (한국어)
 - Keep responses concise and natural (2-3 short paragraphs maximum, unless user specifically asks for detailed explanation)
 - Respond naturally as if these changes are reality
 - Avoid overly long or verbose responses unless requested
+- CRITICAL: This is an ongoing conversation. You have the FULL conversation history. 
+  DO NOT repeat greetings or introduce yourself again if you already did in previous messages.
+  Continue the conversation naturally from where it left off.
+  If the user asks a new question, answer it directly without re-greeting.
 """
                 
                 # BaseChatService로 직접 Gemini API 호출
                 chat_service = BaseChatService()
                 
                 # 대화 히스토리를 Gemini API 형식으로 변환
+                # 주의: Gemini API는 user-model-user-model 교대 순서 필요
+                # system 역할은 건너뛰고, 연속 역할은 합치기
                 contents = []
                 for msg in history:
+                    # system 역할은 시스템 프롬프트에 이미 포함되므로 건너뛰기
+                    if msg.role == "system":
+                        continue
+                    
                     # Gemini API는 "user"와 "model" 역할 사용
                     gemini_role = "model" if msg.role == "assistant" else "user"
-                    contents.append({
-                        "role": gemini_role,
-                        "parts": [{"text": msg.content}]
-                    })
+                    
+                    # 연속된 같은 역할이면 내용을 합치기 (Gemini API 순서 규칙)
+                    if contents and contents[-1]["role"] == gemini_role:
+                        contents[-1]["parts"][0]["text"] += "\n\n" + msg.content
+                    else:
+                        contents.append({
+                            "role": gemini_role,
+                            "parts": [{"text": msg.content}]
+                        })
                 
-                # 현재 사용자 메시지 추가
-                contents.append({
-                    "role": "user",
-                    "parts": [{"text": user_message}]
-                })
+                # 현재 사용자 메시지 추가 (이전 메시지가 user이면 합치기)
+                if contents and contents[-1]["role"] == "user":
+                    contents[-1]["parts"][0]["text"] += "\n\n" + user_message
+                else:
+                    contents.append({
+                        "role": "user",
+                        "parts": [{"text": user_message}]
+                    })
                 
                 logger.info(
                     "Calling Gemini API",
